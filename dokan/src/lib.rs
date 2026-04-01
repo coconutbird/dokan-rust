@@ -16,11 +16,11 @@
 //!
 //! Please note that some of the constants from Win32 API that might be used when interacting with
 //! this crate are not provided directly here. However, you can easily find them in the
-//! [`winapi`] crate.
+//! [`windows-sys`] crate.
 //!
 //! [Dokan]: https://dokan-dev.github.io/
 //! [`dokan-sys`]: https://crates.io/crates/dokan-sys
-//! [`winapi`]: https://crates.io/crates/winapi
+//! [`windows-sys`]: https://crates.io/crates/windows-sys
 
 mod data;
 mod file_system;
@@ -35,13 +35,7 @@ mod usage_tests;
 
 use dokan_sys::*;
 use widestring::U16CStr;
-use winapi::{
-	shared::{
-		minwindef::{DWORD, FALSE, TRUE},
-		ntdef::NTSTATUS,
-	},
-	um::{errhandlingapi::GetLastError, winnt::ACCESS_MASK},
-};
+use windows_sys::Win32::Foundation::{FALSE, GetLastError, NTSTATUS, TRUE};
 
 pub use crate::{data::*, file_system::*, file_system_handler::*, notify::*};
 
@@ -159,7 +153,7 @@ pub fn map_win32_error_to_ntstatus(error: DWORD) -> NTSTATUS {
 
 #[test]
 fn can_map_win32_error_to_ntstatus() {
-	use winapi::shared::{ntstatus::STATUS_INTERNAL_ERROR, winerror::ERROR_INTERNAL_ERROR};
+	use windows_sys::Win32::Foundation::{ERROR_INTERNAL_ERROR, STATUS_INTERNAL_ERROR};
 
 	assert_eq!(
 		map_win32_error_to_ntstatus(ERROR_INTERNAL_ERROR),
@@ -183,7 +177,7 @@ fn can_map_win32_error_to_ntstatus() {
 /// #
 /// # use dokan::win32_ensure;
 /// # use widestring::U16CString;
-/// # use winapi::{shared::ntdef::NTSTATUS, um::processenv::GetCurrentDirectoryW};
+/// # use windows_sys::Win32::{Foundation::NTSTATUS, System::Environment::GetCurrentDirectoryW};
 /// #
 /// fn get_current_directory() -> Result<U16CString, NTSTATUS> {
 /// 	unsafe {
@@ -257,12 +251,10 @@ pub fn map_kernel_to_user_create_file_flags(
 #[test]
 fn test_map_kernel_to_user_create_file_flags() {
 	use dokan_sys::win32::{FILE_OPEN, FILE_WRITE_THROUGH};
-	use winapi::um::{
-		fileapi::OPEN_EXISTING,
-		winbase::FILE_FLAG_WRITE_THROUGH,
-		winnt::{
-			FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL, GENERIC_ALL, GENERIC_EXECUTE, GENERIC_READ,
-			GENERIC_WRITE,
+	use windows_sys::Win32::{
+		Foundation::{GENERIC_ALL, GENERIC_EXECUTE, GENERIC_READ, GENERIC_WRITE},
+		Storage::FileSystem::{
+			FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_WRITE_THROUGH, OPEN_EXISTING,
 		},
 	};
 

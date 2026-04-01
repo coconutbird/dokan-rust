@@ -5,12 +5,12 @@ use std::{
 };
 
 use dokan_sys::{
-	DokanOpenRequestorToken, DokanResetTimeout, DOKAN_FILE_INFO, DOKAN_OPTIONS, PDOKAN_FILE_INFO,
+	DOKAN_FILE_INFO, DOKAN_OPTIONS, DokanOpenRequestorToken, DokanResetTimeout, PDOKAN_FILE_INFO,
 };
 use widestring::U16CStr;
-use winapi::{shared::minwindef::TRUE, um::handleapi::INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Foundation::{INVALID_HANDLE_VALUE, TRUE};
 
-use crate::{file_system_handler::FileSystemHandler, MountFlags};
+use crate::{MountFlags, file_system_handler::FileSystemHandler};
 
 /// Information about the current operation.
 #[derive(Debug)]

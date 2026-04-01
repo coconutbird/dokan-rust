@@ -1,30 +1,29 @@
 use std::slice;
 
 use dokan_sys::{
+	ACCESS_MASK, DWORD, LONGLONG, LPBY_HANDLE_FILE_INFORMATION, LPCVOID, LPDWORD, LPVOID,
+	PSECURITY_INFORMATION, PULONG, PULONGLONG, PVOID, ULONG,
+};
+use dokan_sys::{
+	PDOKAN_FILE_INFO, PDOKAN_IO_SECURITY_CONTEXT, PFillFindData, PFillFindStreamData,
 	win32::{FILE_OPEN_IF, FILE_OVERWRITE_IF, FILE_SUPERSEDE},
-	PFillFindData, PFillFindStreamData, PDOKAN_FILE_INFO, PDOKAN_IO_SECURITY_CONTEXT,
 };
 use widestring::U16CStr;
-use winapi::{
-	shared::{
-		minwindef::{BOOL, DWORD, FILETIME, LPCVOID, LPDWORD, LPVOID, PULONG, TRUE, ULONG},
-		ntdef::{LONGLONG, LPCWSTR, LPWSTR, NTSTATUS, PULONGLONG, PVOID},
-		ntstatus::{STATUS_BUFFER_OVERFLOW, STATUS_OBJECT_NAME_COLLISION},
-	},
-	um::{
-		fileapi::LPBY_HANDLE_FILE_INFORMATION,
-		winnt::{ACCESS_MASK, PSECURITY_DESCRIPTOR, PSECURITY_INFORMATION},
-	},
+use windows_sys::Win32::{
+	Foundation::{FILETIME, NTSTATUS, STATUS_BUFFER_OVERFLOW, STATUS_OBJECT_NAME_COLLISION, TRUE},
+	Security::PSECURITY_DESCRIPTOR,
 };
+use windows_sys::core::BOOL;
+use windows_sys::core::{PCWSTR, PWSTR};
 
 use crate::{
-	data::{wrap_fill_data, OperationInfo},
+	data::{OperationInfo, wrap_fill_data},
 	file_system_handler::FileSystemHandler,
-	operations_helpers::{wrap_nt_result, wrap_unit, NtResult},
+	operations_helpers::{NtResult, wrap_nt_result, wrap_unit},
 };
 
 pub extern "system" fn create_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	security_context: PDOKAN_IO_SECURITY_CONTEXT,
 	desired_access: ACCESS_MASK,
 	file_attributes: ULONG,
@@ -65,7 +64,7 @@ pub extern "system" fn create_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 
 }
 
 pub extern "system" fn cleanup<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) {
 	wrap_unit(|| unsafe {
@@ -76,7 +75,7 @@ pub extern "system" fn cleanup<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
 }
 
 pub extern "system" fn close_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) {
 	wrap_unit(|| unsafe {
@@ -88,7 +87,7 @@ pub extern "system" fn close_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + '
 }
 
 pub extern "system" fn read_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	buffer: LPVOID,
 	buffer_length: DWORD,
 	read_length: LPDWORD,
@@ -109,7 +108,7 @@ pub extern "system" fn read_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h
 }
 
 pub extern "system" fn write_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	buffer: LPCVOID,
 	number_of_bytes_to_write: DWORD,
 	number_of_bytes_written: LPDWORD,
@@ -130,7 +129,7 @@ pub extern "system" fn write_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + '
 }
 
 pub extern "system" fn flush_file_buffers<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
 	wrap_nt_result(|| unsafe {
@@ -142,7 +141,7 @@ pub extern "system" fn flush_file_buffers<'c, 'h: 'c, FSH: FileSystemHandler<'c,
 }
 
 pub extern "system" fn get_file_information<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	buffer: LPBY_HANDLE_FILE_INFORMATION,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
@@ -158,7 +157,7 @@ pub extern "system" fn get_file_information<'c, 'h: 'c, FSH: FileSystemHandler<'
 }
 
 pub extern "system" fn find_files<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	fill_find_data: PFillFindData,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
@@ -172,8 +171,8 @@ pub extern "system" fn find_files<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + '
 }
 
 pub extern "system" fn find_files_with_pattern<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
-	search_pattern: LPCWSTR,
+	file_name: PCWSTR,
+	search_pattern: PCWSTR,
 	fill_find_data: PFillFindData,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
@@ -193,7 +192,7 @@ pub extern "system" fn find_files_with_pattern<'c, 'h: 'c, FSH: FileSystemHandle
 }
 
 pub extern "system" fn set_file_attributes<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	file_attributes: DWORD,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
@@ -206,7 +205,7 @@ pub extern "system" fn set_file_attributes<'c, 'h: 'c, FSH: FileSystemHandler<'c
 }
 
 pub extern "system" fn set_file_time<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	creation_time: *const FILETIME,
 	last_access_time: *const FILETIME,
 	last_write_time: *const FILETIME,
@@ -227,7 +226,7 @@ pub extern "system" fn set_file_time<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> 
 }
 
 pub extern "system" fn delete_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
 	wrap_nt_result(|| unsafe {
@@ -238,7 +237,7 @@ pub extern "system" fn delete_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 
 }
 
 pub extern "system" fn delete_directory<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
 	wrap_nt_result(|| unsafe {
@@ -250,8 +249,8 @@ pub extern "system" fn delete_directory<'c, 'h: 'c, FSH: FileSystemHandler<'c, '
 }
 
 pub extern "system" fn move_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
-	new_file_name: LPCWSTR,
+	file_name: PCWSTR,
+	new_file_name: PCWSTR,
 	replace_if_existing: BOOL,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
@@ -270,7 +269,7 @@ pub extern "system" fn move_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h
 }
 
 pub extern "system" fn set_end_of_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	byte_offset: LONGLONG,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
@@ -283,7 +282,7 @@ pub extern "system" fn set_end_of_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h
 }
 
 pub extern "system" fn set_allocation_size<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	alloc_size: LONGLONG,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
@@ -299,7 +298,7 @@ pub extern "system" fn set_allocation_size<'c, 'h: 'c, FSH: FileSystemHandler<'c
 // release mode. It seems that extracting the function bodies into a common function works around this bug.
 // See https://github.com/rust-lang/rust/issues/72212
 fn lock_unlock_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	byte_offset: LONGLONG,
 	length: LONGLONG,
 	dokan_file_info: PDOKAN_FILE_INFO,
@@ -327,7 +326,7 @@ fn lock_unlock_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
 }
 
 pub extern "system" fn lock_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	byte_offset: LONGLONG,
 	length: LONGLONG,
 	dokan_file_info: PDOKAN_FILE_INFO,
@@ -342,7 +341,7 @@ pub extern "system" fn lock_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h
 }
 
 pub extern "system" fn unlock_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	byte_offset: LONGLONG,
 	length: LONGLONG,
 	dokan_file_info: PDOKAN_FILE_INFO,
@@ -381,12 +380,12 @@ pub extern "system" fn get_disk_free_space<'c, 'h: 'c, FSH: FileSystemHandler<'c
 }
 
 pub extern "system" fn get_volume_information<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	volume_name_buffer: LPWSTR,
+	volume_name_buffer: PWSTR,
 	volume_name_size: DWORD,
 	volume_serial_number: LPDWORD,
 	maximum_component_length: LPDWORD,
 	file_system_flags: LPDWORD,
-	file_system_name_buffer: LPWSTR,
+	file_system_name_buffer: PWSTR,
 	file_system_name_size: DWORD,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
@@ -417,7 +416,7 @@ pub extern "system" fn get_volume_information<'c, 'h: 'c, FSH: FileSystemHandler
 }
 
 pub extern "system" fn mounted<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	mount_point: LPCWSTR,
+	mount_point: PCWSTR,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
 	wrap_nt_result(|| unsafe {
@@ -437,7 +436,7 @@ pub extern "system" fn unmounted<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h
 }
 
 pub extern "system" fn get_file_security<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	security_information: PSECURITY_INFORMATION,
 	security_descriptor: PSECURITY_DESCRIPTOR,
 	buffer_length: ULONG,
@@ -468,7 +467,7 @@ pub extern "system" fn get_file_security<'c, 'h: 'c, FSH: FileSystemHandler<'c, 
 }
 
 pub extern "system" fn set_file_security<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	security_information: PSECURITY_INFORMATION,
 	security_descriptor: PSECURITY_DESCRIPTOR,
 	buffer_length: ULONG,
@@ -489,7 +488,7 @@ pub extern "system" fn set_file_security<'c, 'h: 'c, FSH: FileSystemHandler<'c, 
 }
 
 pub extern "system" fn find_streams<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
-	file_name: LPCWSTR,
+	file_name: PCWSTR,
 	fill_find_stream_data: PFillFindStreamData,
 	find_stream_context: PVOID,
 	dokan_file_info: PDOKAN_FILE_INFO,
