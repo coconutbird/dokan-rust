@@ -41,8 +41,19 @@ impl<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h> OperationInfo<'c, 'h, FSH>
 		unsafe { &*(self.mount_options().GlobalContext as *const _) }
 	}
 
+	pub fn try_context(&self) -> Option<&'c FSH::Context> {
+		let ptr = self.file_info().Context as *const FSH::Context;
+		if ptr.is_null() {
+			None
+		} else {
+			unsafe { Some(&*ptr) }
+		}
+	}
+
 	pub fn context(&self) -> &'c FSH::Context {
-		unsafe { &*(self.file_info().Context as *const _) }
+		self.try_context().expect(
+			"file context is null — create_file may have failed or context was already dropped",
+		)
 	}
 
 	pub fn drop_context(&mut self) {

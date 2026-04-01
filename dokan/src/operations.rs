@@ -70,7 +70,9 @@ pub extern "system" fn cleanup<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
 	wrap_unit(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'c, 'h, FSH>::new(dokan_file_info);
-		info.handler().cleanup(file_name, &info, info.context());
+		if let Some(context) = info.try_context() {
+			info.handler().cleanup(file_name, &info, context);
+		}
 	});
 }
 
@@ -81,7 +83,9 @@ pub extern "system" fn close_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + '
 	wrap_unit(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let mut info = OperationInfo::<'c, 'h, FSH>::new(dokan_file_info);
-		info.handler().close_file(file_name, &info, info.context());
+		if let Some(context) = info.try_context() {
+			info.handler().close_file(file_name, &info, context);
+		}
 		info.drop_context();
 	});
 }
