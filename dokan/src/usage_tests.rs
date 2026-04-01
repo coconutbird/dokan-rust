@@ -872,6 +872,19 @@ impl TestDriveContext<'_> {
 		self.rx_signal.recv().unwrap()
 	}
 
+	/// Receives signals until one matches the predicate, discarding others.
+	/// This is useful when Windows may inject additional calls (e.g. extra
+	/// `GetFileSecurity` queries with different `security_information` values)
+	/// that aren't relevant to the test assertion.
+	pub fn signal_matching(&self, pred: impl Fn(&HandlerSignal) -> bool) -> HandlerSignal {
+		loop {
+			let sig = self.signal();
+			if pred(&sig) {
+				return sig;
+			}
+		}
+	}
+
 	pub fn instance(&self) -> FileSystemHandle {
 		*self
 			.instance
@@ -1362,7 +1375,9 @@ fn can_get_file_security() {
 		);
 		assert_eq!(GetLastError(), ERROR_INSUFFICIENT_BUFFER);
 		assert_eq!(
-			context.signal(),
+			context.signal_matching(
+				|s| matches!(s, HandlerSignal::GetFileSecurity(si, _) if *si == OWNER_SECURITY_INFORMATION)
+			),
 			HandlerSignal::GetFileSecurity(OWNER_SECURITY_INFORMATION, 0)
 		);
 		let mut desc = vec![0u8; desc_len as usize];
@@ -1378,7 +1393,9 @@ fn can_get_file_security() {
 		);
 		assert_eq!(desc.len(), desc_len as usize);
 		assert_eq!(
-			context.signal(),
+			context.signal_matching(
+				|s| matches!(s, HandlerSignal::GetFileSecurity(si, _) if *si == OWNER_SECURITY_INFORMATION)
+			),
 			HandlerSignal::GetFileSecurity(OWNER_SECURITY_INFORMATION, desc_len)
 		);
 		assert_eq!(desc, expected_desc);
