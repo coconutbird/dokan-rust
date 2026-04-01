@@ -692,12 +692,14 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 		context: &'c Self::Context,
 	) {
 		let mut stat = context.entry.stat().write().unwrap();
-		if let Some(mtime) = context.mtime_delayed.lock().unwrap().clone() {
+		let mtime_delayed = context.mtime_delayed.lock().unwrap().clone();
+		if let Some(mtime) = mtime_delayed {
 			if mtime > stat.mtime {
 				stat.mtime = mtime;
 			}
 		}
-		if let Some(atime) = context.atime_delayed.lock().unwrap().clone() {
+		let atime_delayed = context.atime_delayed.lock().unwrap().clone();
+		if let Some(atime) = atime_delayed {
 			if atime > stat.atime {
 				stat.atime = atime;
 			}

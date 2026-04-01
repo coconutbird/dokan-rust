@@ -10,7 +10,7 @@ keywords = ["dokan", "bindings", "driver", "filesystem"]
 categories = ["external-ffi-bindings"]
 readme = "README.md"
 license = "MIT"
-edition = "2021"
+edition = "2024"
 
 [badges]
 appveyor = { repository = "Liryna/dokan-rust" }

@@ -100,7 +100,7 @@ impl ToRawStruct<WIN32_FIND_STREAM_DATA> for FindStreamData {
 }
 
 pub(crate) fn wrap_fill_data<T, U: ToRawStruct<T>, TArg: Copy, TResult: PartialEq>(
-	fill_data: unsafe extern "stdcall" fn(*mut T, TArg) -> TResult,
+	fill_data: unsafe extern "system" fn(*mut T, TArg) -> TResult,
 	fill_data_arg: TArg,
 	success_value: TResult,
 ) -> impl FnMut(&U) -> FillDataResult {
@@ -137,11 +137,11 @@ mod tests {
 		}
 	}
 
-	extern "stdcall" fn fill_data_stub(_data: *mut (), _info: PDOKAN_FILE_INFO) -> c_int {
+	extern "system" fn fill_data_stub(_data: *mut (), _info: PDOKAN_FILE_INFO) -> c_int {
 		0
 	}
 
-	extern "stdcall" fn failing_fill_data_stub(_data: *mut (), _info: PDOKAN_FILE_INFO) -> c_int {
+	extern "system" fn failing_fill_data_stub(_data: *mut (), _info: PDOKAN_FILE_INFO) -> c_int {
 		1
 	}
 

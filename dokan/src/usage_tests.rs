@@ -1468,13 +1468,16 @@ fn can_open_requester_token() {
 		let expected_info_buffer = get_current_user_info();
 		let hf = open_file("Z:\\test_open_requester_token");
 		assert_eq_win32!(CloseHandle(hf), TRUE);
-		if let HandlerSignal::OpenRequesterToken(info_buffer) = context.signal() {
-			let expected_info = &*(expected_info_buffer.as_ptr() as *const TOKEN_USER);
-			let info = &*(info_buffer.as_ptr() as *const TOKEN_USER);
-			assert_eq_win32!(EqualSid(info.User.Sid, expected_info.User.Sid), TRUE);
-			assert_eq!(info.User.Attributes, expected_info.User.Attributes);
-		} else {
-			panic!("unexpected signal type");
+		match context.signal() {
+			HandlerSignal::OpenRequesterToken(info_buffer) => {
+				let expected_info = &*(expected_info_buffer.as_ptr() as *const TOKEN_USER);
+				let info = &*(info_buffer.as_ptr() as *const TOKEN_USER);
+				assert_eq_win32!(EqualSid(info.User.Sid, expected_info.User.Sid), TRUE);
+				assert_eq!(info.User.Attributes, expected_info.User.Attributes);
+			}
+			_ => {
+				panic!("unexpected signal type");
+			}
 		}
 	});
 }
