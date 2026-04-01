@@ -14,6 +14,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install Dokan
+        run: winget install -e --id dokan-dev.Dokany --accept-source-agreements --accept-package-agreements
+
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build
