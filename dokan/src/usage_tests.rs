@@ -896,7 +896,7 @@ pub fn test_flags() -> MountFlags {
 
 #[allow(unused_must_use)]
 pub fn with_test_drive<Scope: FnOnce(TestDriveContext)>(scope: Scope) {
-	let _guard = TEST_DRIVE_LOCK.lock().unwrap();
+	let _guard = TEST_DRIVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
 	init();
 
