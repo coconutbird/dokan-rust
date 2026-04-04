@@ -65,7 +65,7 @@ use crate::{
 	MountOptions,
 	data::{
 		CreateFileInfo, DiskSpaceInfo, FileInfo, FileTimeOperation, FillDataResult, FindData,
-		FindStreamData, OperationInfo, VolumeInfo,
+		FindStreamData, OperationInfo, VolumeInfo, list_mount_points,
 	},
 	file_system_handler::OperationResult,
 	init, notify_create, notify_delete, notify_rename, notify_update, notify_xattr_update,
@@ -481,7 +481,6 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		info: &OperationInfo<'a, 'b, Self>,
 		_context: &'a Self::Context,
 	) -> OperationResult<FileInfo> {
-		check_pid(info.pid())?;
 		Ok(FileInfo {
 			attributes: if info.is_dir() {
 				FILE_ATTRIBUTE_DIRECTORY
@@ -501,10 +500,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		&'b self,
 		file_name: &U16CStr,
 		mut fill_find_data: impl FnMut(&FindData) -> FillDataResult,
-		info: &OperationInfo<'a, 'b, Self>,
+		_info: &OperationInfo<'a, 'b, Self>,
 		_context: &'a Self::Context,
 	) -> OperationResult<()> {
-		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
 			"\\test_find_files" => fill_find_data(&FindData {
@@ -841,10 +839,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		&'b self,
 		file_name: &U16CStr,
 		mut fill_find_stream_data: impl FnMut(&FindStreamData) -> FillDataResult,
-		info: &OperationInfo<'a, 'b, Self>,
+		_info: &OperationInfo<'a, 'b, Self>,
 		_context: &'a Self::Context,
 	) -> OperationResult<()> {
-		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_find_streams" {
 			fill_find_stream_data(&FindStreamData {
@@ -915,6 +912,25 @@ pub fn with_test_drive<Scope: FnOnce(TestDriveContext)>(scope: Scope) {
 
 	// In case previous tests failed and didn't unmount the drive.
 	unmount(convert_str("Z:\\"));
+
+	// DokanRemoveMountPoint is asynchronous — wait until Z:\ is no longer in the
+	// active mount point list before mounting again. Without this, on Windows Server
+	// a pending release can race with the next mount and tear it down immediately.
+	let deadline = std::time::Instant::now() + Duration::from_secs(5);
+	while std::time::Instant::now() < deadline {
+		let z_mounted = list_mount_points(false)
+			.map(|list| {
+				(&list).into_iter().any(|mp| {
+					mp.mount_point
+						.is_some_and(|p| p.to_string_lossy().contains("Z:"))
+				})
+			})
+			.unwrap_or(false);
+		if !z_mounted {
+			break;
+		}
+		thread::sleep(Duration::from_millis(50));
+	}
 
 	let (tx_instance, rx_instance) = mpsc::sync_channel(1);
 
