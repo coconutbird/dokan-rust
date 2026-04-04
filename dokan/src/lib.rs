@@ -313,9 +313,10 @@ pub fn unmount_and_wait(mount_point: impl AsRef<U16CStr>, timeout: Duration) -> 
 	loop {
 		let still_mounted = list_mount_points(false)
 			.map(|list| {
-				(&list)
-					.into_iter()
-					.any(|mp| mp.mount_point.is_some_and(|p| p.to_string_lossy() == mount_point_str))
+				(&list).into_iter().any(|mp| {
+					mp.mount_point
+						.is_some_and(|p| p.to_string_lossy() == mount_point_str)
+				})
 			})
 			.unwrap_or(false);
 		if !still_mounted {

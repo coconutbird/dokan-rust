@@ -944,7 +944,10 @@ pub fn with_test_drive<Scope: FnOnce(TestDriveContext)>(scope: Scope) {
 		instance: RefCell::new(None),
 	});
 
-	assert!(unmount_and_wait(convert_str("Z:\\"), Duration::from_secs(5)));
+	assert!(unmount_and_wait(
+		convert_str("Z:\\"),
+		Duration::from_secs(5)
+	));
 	assert_eq!(rx_signal.recv().unwrap(), HandlerSignal::Unmounted);
 
 	drive_thread_handle.join().unwrap();

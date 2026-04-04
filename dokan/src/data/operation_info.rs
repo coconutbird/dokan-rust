@@ -50,6 +50,19 @@ impl<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h> OperationInfo<'c, 'h, FSH>
 		}
 	}
 
+	/// Returns the file context, panicking if it is null.
+	///
+	/// # Deprecated
+	///
+	/// Use [`try_context`] instead, which returns `Option<&Context>` and lets you handle
+	/// the null case gracefully. The dispatch layer already guards against null contexts
+	/// before calling handler methods, so this method should rarely be needed.
+	///
+	/// [`try_context`]: Self::try_context
+	#[deprecated(
+		since = "0.4.0",
+		note = "use try_context() instead to handle null contexts gracefully"
+	)]
 	pub fn context(&self) -> &'c FSH::Context {
 		self.try_context().expect(
 			"file context is null — create_file may have failed or context was already dropped",

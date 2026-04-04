@@ -10,7 +10,10 @@ use dokan_sys::{
 };
 use widestring::U16CStr;
 use windows_sys::Win32::{
-	Foundation::{FILETIME, NTSTATUS, STATUS_BUFFER_OVERFLOW, STATUS_OBJECT_NAME_COLLISION, TRUE},
+	Foundation::{
+		FILETIME, NTSTATUS, STATUS_BUFFER_OVERFLOW, STATUS_INVALID_HANDLE,
+		STATUS_OBJECT_NAME_COLLISION, TRUE,
+	},
 	Security::PSECURITY_DESCRIPTOR,
 };
 use windows_sys::core::BOOL;
@@ -102,9 +105,10 @@ pub extern "system" fn read_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h
 		*read_length = 0;
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'c, 'h, FSH>::new(dokan_file_info);
+		let context = info.try_context().ok_or(STATUS_INVALID_HANDLE)?;
 		let buffer = slice::from_raw_parts_mut(buffer as *mut _, buffer_length as usize);
 		info.handler()
-			.read_file(file_name, offset, buffer, &info, info.context())
+			.read_file(file_name, offset, buffer, &info, context)
 			.map(|bytes_read| {
 				*read_length = bytes_read;
 			})
@@ -123,9 +127,10 @@ pub extern "system" fn write_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + '
 		*number_of_bytes_written = 0;
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'c, 'h, FSH>::new(dokan_file_info);
+		let context = info.try_context().ok_or(STATUS_INVALID_HANDLE)?;
 		let buffer = slice::from_raw_parts(buffer as *mut _, number_of_bytes_to_write as usize);
 		info.handler()
-			.write_file(file_name, offset, buffer, &info, info.context())
+			.write_file(file_name, offset, buffer, &info, context)
 			.map(|bytes_written| {
 				*number_of_bytes_written = bytes_written;
 			})
@@ -139,8 +144,8 @@ pub extern "system" fn flush_file_buffers<'c, 'h: 'c, FSH: FileSystemHandler<'c,
 	wrap_nt_result(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'c, 'h, FSH>::new(dokan_file_info);
-		info.handler()
-			.flush_file_buffers(file_name, &info, info.context())
+		let context = info.try_context().ok_or(STATUS_INVALID_HANDLE)?;
+		info.handler().flush_file_buffers(file_name, &info, context)
 	})
 }
 
@@ -152,8 +157,9 @@ pub extern "system" fn get_file_information<'c, 'h: 'c, FSH: FileSystemHandler<'
 	wrap_nt_result(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'c, 'h, FSH>::new(dokan_file_info);
+		let context = info.try_context().ok_or(STATUS_INVALID_HANDLE)?;
 		info.handler()
-			.get_file_information(file_name, &info, info.context())
+			.get_file_information(file_name, &info, context)
 			.map(|file_info| {
 				*buffer = file_info.to_raw_struct();
 			})
@@ -169,8 +175,9 @@ pub extern "system" fn find_files<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + '
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let fill_wrapper = wrap_fill_data(fill_find_data, dokan_file_info, 0);
 		let info = OperationInfo::<'c, 'h, FSH>::new(dokan_file_info);
+		let context = info.try_context().ok_or(STATUS_INVALID_HANDLE)?;
 		info.handler()
-			.find_files(file_name, fill_wrapper, &info, info.context())
+			.find_files(file_name, fill_wrapper, &info, context)
 	})
 }
 
@@ -185,12 +192,13 @@ pub extern "system" fn find_files_with_pattern<'c, 'h: 'c, FSH: FileSystemHandle
 		let search_pattern = U16CStr::from_ptr_str(search_pattern);
 		let fill_wrapper = wrap_fill_data(fill_find_data, dokan_file_info, 0);
 		let info = OperationInfo::<'c, 'h, FSH>::new(dokan_file_info);
+		let context = info.try_context().ok_or(STATUS_INVALID_HANDLE)?;
 		info.handler().find_files_with_pattern(
 			file_name,
 			search_pattern,
 			fill_wrapper,
 			&info,
-			info.context(),
+			context,
 		)
 	})
 }
@@ -203,8 +211,9 @@ pub extern "system" fn set_file_attributes<'c, 'h: 'c, FSH: FileSystemHandler<'c
 	wrap_nt_result(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'c, 'h, FSH>::new(dokan_file_info);
+		let context = info.try_context().ok_or(STATUS_INVALID_HANDLE)?;
 		info.handler()
-			.set_file_attributes(file_name, file_attributes, &info, info.context())
+			.set_file_attributes(file_name, file_attributes, &info, context)
 	})
 }
 
@@ -218,13 +227,14 @@ pub extern "system" fn set_file_time<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> 
 	wrap_nt_result(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'c, 'h, FSH>::new(dokan_file_info);
+		let context = info.try_context().ok_or(STATUS_INVALID_HANDLE)?;
 		info.handler().set_file_time(
 			file_name,
 			creation_time.into(),
 			last_access_time.into(),
 			last_write_time.into(),
 			&info,
-			info.context(),
+			context,
 		)
 	})
 }
@@ -236,7 +246,8 @@ pub extern "system" fn delete_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 
 	wrap_nt_result(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'c, 'h, FSH>::new(dokan_file_info);
-		info.handler().delete_file(file_name, &info, info.context())
+		let context = info.try_context().ok_or(STATUS_INVALID_HANDLE)?;
+		info.handler().delete_file(file_name, &info, context)
 	})
 }
 
@@ -247,8 +258,8 @@ pub extern "system" fn delete_directory<'c, 'h: 'c, FSH: FileSystemHandler<'c, '
 	wrap_nt_result(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'c, 'h, FSH>::new(dokan_file_info);
-		info.handler()
-			.delete_directory(file_name, &info, info.context())
+		let context = info.try_context().ok_or(STATUS_INVALID_HANDLE)?;
+		info.handler().delete_directory(file_name, &info, context)
 	})
 }
 
@@ -262,12 +273,13 @@ pub extern "system" fn move_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let new_file_name = U16CStr::from_ptr_str(new_file_name);
 		let info = OperationInfo::<'c, 'h, FSH>::new(dokan_file_info);
+		let context = info.try_context().ok_or(STATUS_INVALID_HANDLE)?;
 		info.handler().move_file(
 			file_name,
 			new_file_name,
 			replace_if_existing == TRUE,
 			&info,
-			info.context(),
+			context,
 		)
 	})
 }
@@ -280,8 +292,9 @@ pub extern "system" fn set_end_of_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h
 	wrap_nt_result(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'c, 'h, FSH>::new(dokan_file_info);
+		let context = info.try_context().ok_or(STATUS_INVALID_HANDLE)?;
 		info.handler()
-			.set_end_of_file(file_name, byte_offset, &info, info.context())
+			.set_end_of_file(file_name, byte_offset, &info, context)
 	})
 }
 
@@ -293,8 +306,9 @@ pub extern "system" fn set_allocation_size<'c, 'h: 'c, FSH: FileSystemHandler<'c
 	wrap_nt_result(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'c, 'h, FSH>::new(dokan_file_info);
+		let context = info.try_context().ok_or(STATUS_INVALID_HANDLE)?;
 		info.handler()
-			.set_allocation_size(file_name, alloc_size, &info, info.context())
+			.set_allocation_size(file_name, alloc_size, &info, context)
 	})
 }
 
@@ -320,13 +334,14 @@ fn lock_unlock_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
 	wrap_nt_result(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'c, 'h, FSH>::new(dokan_file_info);
+		let context = info.try_context().ok_or(STATUS_INVALID_HANDLE)?;
 		func(
 			info.handler(),
 			file_name,
 			byte_offset,
 			length,
 			&info,
-			info.context(),
+			context,
 		)
 	})
 }
@@ -452,6 +467,7 @@ pub extern "system" fn get_file_security<'c, 'h: 'c, FSH: FileSystemHandler<'c, 
 	wrap_nt_result(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'c, 'h, FSH>::new(dokan_file_info);
+		let context = info.try_context().ok_or(STATUS_INVALID_HANDLE)?;
 		info.handler()
 			.get_file_security(
 				file_name,
@@ -459,7 +475,7 @@ pub extern "system" fn get_file_security<'c, 'h: 'c, FSH: FileSystemHandler<'c, 
 				security_descriptor,
 				buffer_length,
 				&info,
-				info.context(),
+				context,
 			)
 			.and_then(|needed| {
 				*length_needed = needed;
@@ -482,13 +498,14 @@ pub extern "system" fn set_file_security<'c, 'h: 'c, FSH: FileSystemHandler<'c, 
 	wrap_nt_result(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'c, 'h, FSH>::new(dokan_file_info);
+		let context = info.try_context().ok_or(STATUS_INVALID_HANDLE)?;
 		info.handler().set_file_security(
 			file_name,
 			*security_information,
 			security_descriptor,
 			buffer_length,
 			&info,
-			info.context(),
+			context,
 		)
 	})
 }
@@ -503,7 +520,8 @@ pub extern "system" fn find_streams<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> +
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let fill_wrapper = wrap_fill_data(fill_find_stream_data, find_stream_context, 1);
 		let info = OperationInfo::<'c, 'h, FSH>::new(dokan_file_info);
+		let context = info.try_context().ok_or(STATUS_INVALID_HANDLE)?;
 		info.handler()
-			.find_streams(file_name, fill_wrapper, &info, info.context())
+			.find_streams(file_name, fill_wrapper, &info, context)
 	})
 }
