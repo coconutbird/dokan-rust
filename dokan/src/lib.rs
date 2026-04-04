@@ -180,17 +180,17 @@ fn can_map_win32_error_to_ntstatus() {
 /// # use windows_sys::Win32::{Foundation::NTSTATUS, System::Environment::GetCurrentDirectoryW};
 /// #
 /// fn get_current_directory() -> Result<U16CString, NTSTATUS> {
-/// 	unsafe {
-/// 		let len = GetCurrentDirectoryW(0, ptr::null_mut());
-/// 		win32_ensure(len != 0)?;
+///     unsafe {
+///         let len = GetCurrentDirectoryW(0, ptr::null_mut());
+///         win32_ensure(len != 0)?;
 ///
-/// 		let mut buffer = Vec::with_capacity(len as usize);
-/// 		let actual_len = GetCurrentDirectoryW(len, buffer.as_mut_ptr());
-/// 		win32_ensure(actual_len != 0)?;
-/// 		assert_eq!(actual_len, len);
+///         let mut buffer = Vec::with_capacity(len as usize);
+///         let actual_len = GetCurrentDirectoryW(len, buffer.as_mut_ptr());
+///         win32_ensure(actual_len != 0)?;
+///         assert_eq!(actual_len, len);
 ///
-/// 		Ok(U16CString::from_vec_unchecked(buffer))
-/// 	}
+///         Ok(U16CString::from_vec_unchecked(buffer))
+///     }
 /// }
 /// ```
 pub fn win32_ensure(condition: bool) -> Result<(), NTSTATUS> {

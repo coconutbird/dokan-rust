@@ -1,5 +1,5 @@
 use std::{
-	mem::transmute_copy,
+	ptr,
 	time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -23,7 +23,7 @@ pub enum FileTimeOperation {
 impl From<*const FILETIME> for FileTimeOperation {
 	fn from(time: *const FILETIME) -> Self {
 		unsafe {
-			let time_val = transmute_copy::<_, i64>(&*time);
+			let time_val = ptr::read_unaligned(time as *const i64);
 			match time_val {
 				0 => FileTimeOperation::DontChange,
 				-1 => FileTimeOperation::DisableUpdate,

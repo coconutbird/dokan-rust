@@ -301,19 +301,21 @@ pub extern "system" fn set_allocation_size<'c, 'h: 'c, FSH: FileSystemHandler<'c
 // Extern stdcall functions with similar bodies but not called directly with trigger a compiler bug when built in
 // release mode. It seems that extracting the function bodies into a common function works around this bug.
 // See https://github.com/rust-lang/rust/issues/72212
+type LockUnlockFn<'c, 'h, FSH> = fn(
+	&'h FSH,
+	&U16CStr,
+	i64,
+	i64,
+	&OperationInfo<'c, 'h, FSH>,
+	&'c <FSH as FileSystemHandler<'c, 'h>>::Context,
+) -> NtResult;
+
 fn lock_unlock_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h>(
 	file_name: PCWSTR,
 	byte_offset: LONGLONG,
 	length: LONGLONG,
 	dokan_file_info: PDOKAN_FILE_INFO,
-	func: fn(
-		&'h FSH,
-		&U16CStr,
-		i64,
-		i64,
-		&OperationInfo<'c, 'h, FSH>,
-		&'c FSH::Context,
-	) -> NtResult,
+	func: LockUnlockFn<'c, 'h, FSH>,
 ) -> NTSTATUS {
 	wrap_nt_result(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
