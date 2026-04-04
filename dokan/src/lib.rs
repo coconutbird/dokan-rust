@@ -33,6 +33,8 @@ mod to_file_time;
 #[cfg(test)]
 mod usage_tests;
 
+use std::time::Duration;
+
 use dokan_sys::*;
 use widestring::U16CStr;
 use windows_sys::Win32::Foundation::{FALSE, GetLastError, NTSTATUS, TRUE};
@@ -277,10 +279,53 @@ fn test_map_kernel_to_user_create_file_flags() {
 
 /// Unmounts a Dokan volume from the specified mount point.
 ///
-/// Returns whether it succeeded.
+/// **Note:** This function is asynchronous — it signals the Dokan driver to release the mount
+/// point and returns immediately. The driver-level teardown may still be in progress when it
+/// returns. If you need to remount on the same mount point, use [`unmount_and_wait`] instead
+/// to avoid a race where a pending release tears down the new mount.
+///
+/// Returns whether the unmount request was accepted.
 #[must_use]
 pub fn unmount(mount_point: impl AsRef<U16CStr>) -> bool {
 	unsafe { DokanRemoveMountPoint(mount_point.as_ref().as_ptr()) == TRUE }
+}
+
+/// Unmounts a Dokan volume and waits for the mount point to be fully released.
+///
+/// This is the synchronous counterpart to [`unmount`]. After signaling the Dokan driver to
+/// release the mount point, it polls [`list_mount_points`] until the mount point no longer
+/// appears in the active mount list, or the timeout expires.
+///
+/// Use this when you need to remount on the same mount point, or when you need to ensure the
+/// volume is fully torn down before proceeding.
+///
+/// Returns `true` if the mount point was successfully released within the timeout.
+/// Returns `false` if the unmount request was rejected or the timeout expired.
+#[must_use]
+pub fn unmount_and_wait(mount_point: impl AsRef<U16CStr>, timeout: Duration) -> bool {
+	let mount_point = mount_point.as_ref();
+	if !unmount(mount_point) {
+		return false;
+	}
+
+	let mount_point_str = mount_point.to_string_lossy();
+	let deadline = std::time::Instant::now() + timeout;
+	loop {
+		let still_mounted = list_mount_points(false)
+			.map(|list| {
+				(&list)
+					.into_iter()
+					.any(|mp| mp.mount_point.is_some_and(|p| p.to_string_lossy() == mount_point_str))
+			})
+			.unwrap_or(false);
+		if !still_mounted {
+			return true;
+		}
+		if std::time::Instant::now() >= deadline {
+			return false;
+		}
+		std::thread::sleep(Duration::from_millis(50));
+	}
 }
 
 /// Output stream to write debug messages to.
