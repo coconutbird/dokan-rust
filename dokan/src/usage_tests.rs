@@ -905,17 +905,11 @@ pub fn test_flags() -> MountFlags {
 }
 
 #[allow(unused_must_use)]
-pub fn with_test_drive<Scope: FnOnce(TestDriveContext)>(scope: Scope) {
-	let _guard = TEST_DRIVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-
-	init();
-
-	// In case previous tests failed and didn't unmount the drive.
-	unmount(convert_str("Z:\\"));
-
-	// DokanRemoveMountPoint is asynchronous — wait until Z:\ is no longer in the
-	// active mount point list before mounting again. Without this, on Windows Server
-	// a pending release can race with the next mount and tear it down immediately.
+/// Polls `list_mount_points` until `Z:` is no longer in the active mount list.
+/// DokanRemoveMountPoint is asynchronous — the driver may still be processing
+/// a teardown even after the user-space call returns. Without this wait, a
+/// pending release can race with the next mount and tear it down immediately.
+fn wait_for_z_unmounted() {
 	let deadline = std::time::Instant::now() + Duration::from_secs(5);
 	while std::time::Instant::now() < deadline {
 		let z_mounted = list_mount_points(false)
@@ -931,6 +925,16 @@ pub fn with_test_drive<Scope: FnOnce(TestDriveContext)>(scope: Scope) {
 		}
 		thread::sleep(Duration::from_millis(50));
 	}
+}
+
+pub fn with_test_drive<Scope: FnOnce(TestDriveContext)>(scope: Scope) {
+	let _guard = TEST_DRIVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+	init();
+
+	// In case previous tests failed and didn't unmount the drive.
+	let _ = unmount(convert_str("Z:\\"));
+	wait_for_z_unmounted();
 
 	let (tx_instance, rx_instance) = mpsc::sync_channel(1);
 
@@ -966,6 +970,11 @@ pub fn with_test_drive<Scope: FnOnce(TestDriveContext)>(scope: Scope) {
 	assert_eq!(rx_signal.recv().unwrap(), HandlerSignal::Unmounted);
 
 	drive_thread_handle.join().unwrap();
+
+	// Wait for the driver to fully release the mount point before returning.
+	// Without this, the next test may mount on Z:\ while a pending driver-level
+	// release is still in-flight, which can tear down the new mount immediately.
+	wait_for_z_unmounted();
 
 	shutdown();
 }
