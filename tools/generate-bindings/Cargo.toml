@@ -1,9 +1,9 @@
 [package]
 name = "generate-dokan-bindings"
-version = "0.0.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish = false
 
 [dependencies]
-bindgen = "0.72"
+bindgen.workspace = true

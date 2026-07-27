@@ -1,10 +1,30 @@
 [workspace]
 members = ["dokan-sys", "dokan", "tools/generate-bindings"]
+default-members = ["dokan-sys", "dokan"]
 resolver = "2"
 
 [workspace.package]
+version = "0.3.1+dokan230"
+authors = ["DDoSolitary <DDoSolitary@gmail.com>"]
 edition = "2024"
 rust-version = "1.85"
+homepage = "https://dokan-dev.github.io"
+repository = "https://github.com/dokan-dev/dokan-rust"
+license = "MIT"
+
+[workspace.dependencies]
+bindgen = "0.72"
+bitflags = "2.9"
+cc = "1.2"
+clap = "4.5"
+ctrlc = "3.4"
+dokan-sys = { version = "0.3.1", path = "dokan-sys" }
+lazy_static = "1.5"
+parking_lot = "0.12"
+regex = "1.11"
+widestring = "1.2"
+winapi = "0.3"
+windows = { version = "0.62.2", default-features = false }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"

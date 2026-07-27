@@ -1442,7 +1442,7 @@ fn can_find_streams() {
 			0,
 		);
 		assert_ne_win32!(hf, INVALID_HANDLE_VALUE);
-		assert_eq!(data.StreamSize, 42);
+		assert_eq!(data.StreamSize.QuadPart, 42);
 		assert_eq!(
 			U16CStr::from_slice_truncate(&data.cStreamName).unwrap(),
 			convert_str("::$DATA")

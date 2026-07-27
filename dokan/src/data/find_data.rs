@@ -1,8 +1,10 @@
 use std::time::SystemTime;
 
-use dokan_sys::win32::WIN32_FIND_STREAM_DATA;
+use dokan_sys::{
+	LARGE_INTEGER,
+	win32::{WIN32_FIND_DATAW, WIN32_FIND_STREAM_DATA},
+};
 use widestring::U16CString;
-use windows_sys::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
 
 use crate::{FileAttributes, FillDataError, FillDataResult, to_file_time::ToFileTime};
 
@@ -92,7 +94,9 @@ impl ToRawStruct<WIN32_FIND_STREAM_DATA> for FindStreamData {
 			c_stream_name[..name_slice.len()].copy_from_slice(name_slice);
 			Some(WIN32_FIND_STREAM_DATA {
 				// LARGE_INTEGER is represented as a signed 64-bit quad part by winapi.
-				StreamSize: self.size,
+				StreamSize: LARGE_INTEGER {
+					QuadPart: self.size,
+				},
 				cStreamName: c_stream_name,
 			})
 		} else {

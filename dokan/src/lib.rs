@@ -35,8 +35,6 @@ mod types;
 use dokan_sys::*;
 use std::sync::{Mutex, OnceLock};
 use widestring::U16CStr;
-use windows_sys::Win32::Foundation::GetLastError;
-
 const FALSE: i32 = 0;
 const TRUE: i32 = 1;
 
@@ -191,7 +189,9 @@ fn test_is_name_in_expression() {
 	));
 }
 
-/// Converts Win32 error (e.g. returned by [`GetLastError`]) to [`NTSTATUS`].
+/// Converts a Win32 error, such as one returned by
+/// [`GetLastError`](https://learn.microsoft.com/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror),
+/// to [`NtStatus`].
 pub fn map_win32_error_to_ntstatus(error: u32) -> NtStatus {
 	NtStatus::from_raw(unsafe { DokanNtStatusFromWin32(error) })
 }
@@ -218,7 +218,10 @@ fn can_map_win32_error_to_ntstatus() {
 pub fn win32_ensure(condition: bool) -> Result<(), NtStatus> {
 	match condition {
 		true => Ok(()),
-		false => Err(map_win32_error_to_ntstatus(unsafe { GetLastError() })),
+		false => {
+			let error = std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as u32;
+			Err(map_win32_error_to_ntstatus(error))
+		}
 	}
 }
 

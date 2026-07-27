@@ -1,4 +1,6 @@
 pub use crate::PWIN32_FIND_STREAM_DATA;
+pub type BY_HANDLE_FILE_INFORMATION = crate::_BY_HANDLE_FILE_INFORMATION;
+pub type WIN32_FIND_DATAW = crate::_WIN32_FIND_DATAW;
 pub type WIN32_FIND_STREAM_DATA = crate::_WIN32_FIND_STREAM_DATA;
 
 // from ntifs.h

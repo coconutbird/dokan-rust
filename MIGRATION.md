@@ -59,6 +59,7 @@ do not.
   conversions to and from `windows::Win32::Foundation::NTSTATUS`.
 - `MountOptions::volume_security_descriptor` owns a `Vec<u8>` and validates the
   Dokany size limit when the mounter is constructed.
-- The implementation and generated ABI bindings use `windows-sys`; `winapi`
-  remains only a development dependency for the legacy Win32-heavy test
-  harness and memfs example internals.
+- Generated ABI types come directly from the vendored Windows/Dokany headers;
+  `dokan-sys` therefore has no runtime Rust dependencies. `winapi` remains only
+  a development dependency for the legacy Win32-heavy test harness and memfs
+  example internals.

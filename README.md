@@ -14,12 +14,19 @@ Implementing a filesystem through `dokan` does not require a direct dependency
 on a Windows binding crate. Its public API provides typed access rights,
 attributes, create options, sharing modes, security information, volume
 features, owned handles, safe security buffers, and common NT status values.
-The ABI layer uses Microsoft's `windows-sys` internally.
+The ABI structs are generated directly from the vendored C headers, so
+`dokan-sys` has no runtime Rust dependencies.
 
 `NtStatus` has binding-neutral `from_raw`/`into_raw` methods, which work
 directly with the integer aliases used by `windows-sys` and legacy `winapi`.
 Applications using Microsoft's projected `windows` crate can enable
 `dokan`'s `windows-interop` feature for direct `From` conversions.
+
+All dependency versions are declared once under the workspace's
+`[workspace.dependencies]`. Cargo automatically unifies these with compatible
+versions selected by an application. The default consumer graph is only
+`dokan`, `dokan-sys`, `bitflags`, and `widestring`; the larger projected
+`windows` graph and the bindgen maintainer tool are opt-in.
 
 # Build
 

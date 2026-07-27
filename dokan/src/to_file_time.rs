@@ -1,6 +1,6 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use windows_sys::Win32::Foundation::FILETIME;
+use dokan_sys::FILETIME;
 
 pub const FILETIME_OFFSET: Duration = Duration::from_secs(11644473600);
 

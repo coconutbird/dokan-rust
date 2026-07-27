@@ -1,6 +1,6 @@
 use std::time::SystemTime;
 
-use windows_sys::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION;
+use dokan_sys::win32::BY_HANDLE_FILE_INFORMATION;
 
 use crate::{FileAttributes, to_file_time::ToFileTime};
 
