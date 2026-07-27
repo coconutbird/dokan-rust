@@ -1,8 +1,8 @@
 use std::{mem, pin::Pin, ptr};
 
-use dokan::{OperationResult, map_win32_error_to_ntstatus, win32_ensure};
+use dokan::{OperationResult, map_win32_error_to_ntstatus, status::*, win32_ensure};
 use winapi::{
-	shared::{minwindef, ntdef, ntstatus::*, winerror},
+	shared::{minwindef, ntdef, winerror},
 	um::{errhandlingapi::GetLastError, heapapi, securitybaseapi, winnt},
 };
 

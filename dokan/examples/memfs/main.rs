@@ -18,17 +18,14 @@ use dokan::{
 	CreateFileInfo, DiskSpaceInfo, FileInfo, FileSystemHandler, FileSystemMounter,
 	FileTimeOperation, FillDataError, FillDataResult, FindData, FindStreamData, MountFlags,
 	MountOptions, OperationInfo, OperationResult, SecurityInformation, VolumeInfo, init, shutdown,
-	unmount,
+	status::*, unmount,
 };
 use dokan_sys::win32::{
 	FILE_CREATE, FILE_DELETE_ON_CLOSE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN,
 	FILE_OPEN_IF, FILE_OVERWRITE, FILE_OVERWRITE_IF, FILE_SUPERSEDE,
 };
 use widestring::{U16CStr, U16CString, U16Str, U16String};
-use winapi::{
-	shared::{ntdef, ntstatus::*},
-	um::winnt,
-};
+use winapi::{shared::ntdef, um::winnt};
 
 use crate::{path::FullName, security::SecurityDescriptor};
 

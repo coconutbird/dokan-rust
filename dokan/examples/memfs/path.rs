@@ -1,8 +1,7 @@
 use std::{borrow::Borrow, sync::Arc};
 
-use dokan::OperationResult;
+use dokan::{OperationResult, status::*};
 use widestring::{U16CStr, U16Str, U16String};
-use winapi::shared::ntstatus::*;
 
 use crate::{DirEntry, Entry, EntryName, EntryNameRef};
 

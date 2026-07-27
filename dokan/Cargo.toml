@@ -16,10 +16,15 @@ rust-version.workspace = true
 [badges]
 appveyor = { repository = "Liryna/dokan-rust" }
 
+[features]
+default = []
+windows-interop = ["dep:windows"]
+
 [dependencies]
 bitflags = "2.9"
 dokan-sys = { path = "../dokan-sys" }
 widestring = "1.2"
+windows = { version = "0.62.2", default-features = false, features = ["Win32_Foundation"], optional = true }
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",

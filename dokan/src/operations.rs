@@ -20,9 +20,9 @@ use crate::{
 };
 
 const TRUE: i32 = 1;
-const STATUS_BUFFER_OVERFLOW: i32 = status::BUFFER_OVERFLOW;
-const STATUS_INVALID_PARAMETER: i32 = status::INVALID_PARAMETER;
-const STATUS_OBJECT_NAME_COLLISION: i32 = status::OBJECT_NAME_COLLISION;
+const STATUS_BUFFER_OVERFLOW: crate::NtStatus = status::BUFFER_OVERFLOW;
+const STATUS_INVALID_PARAMETER: crate::NtStatus = status::INVALID_PARAMETER;
+const STATUS_OBJECT_NAME_COLLISION: crate::NtStatus = status::OBJECT_NAME_COLLISION;
 
 pub extern "system" fn create_file<FSH: FileSystemHandler>(
 	file_name: LPCWSTR,

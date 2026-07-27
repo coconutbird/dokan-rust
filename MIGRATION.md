@@ -54,6 +54,9 @@ do not.
 - `FileInfo` and `FindData` use `FileAttributes`; `VolumeInfo` uses
   `VolumeFeatures`.
 - Common operation failures are available from `dokan::status`.
+- `NtStatus` is now a transparent crate-owned type. Its raw conversions work
+  with `windows-sys` and `winapi`; enable `windows-interop` for direct
+  conversions to and from `windows::Win32::Foundation::NTSTATUS`.
 - `MountOptions::volume_security_descriptor` owns a `Vec<u8>` and validates the
   Dokany size limit when the mounter is constructed.
 - The implementation and generated ABI bindings use `windows-sys`; `winapi`

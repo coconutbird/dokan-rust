@@ -23,8 +23,7 @@ use widestring::{U16CStr, U16CString};
 use winapi::{
 	shared::{
 		minwindef::{BOOL, FALSE, HLOCAL, LPCVOID, LPVOID, MAX_PATH, TRUE},
-		ntdef::{HANDLE, NTSTATUS, NULL},
-		ntstatus::{STATUS_ACCESS_DENIED, STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS},
+		ntdef::{HANDLE, NULL},
 		sddl::ConvertSidToStringSidW,
 		winerror::{
 			ERROR_HANDLE_EOF, ERROR_INSUFFICIENT_BUFFER, ERROR_INTERNAL_ERROR, ERROR_IO_PENDING,
@@ -45,6 +44,7 @@ use winapi::{
 	},
 };
 
+use dokan::status::{STATUS_ACCESS_DENIED, STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS};
 use dokan::{
 	CreateFileInfo, DeviceType, DiskSpaceInfo, FileInfo, FileSystemHandle, FileSystemHandler,
 	FileSystemMountError, FileSystemMounter, FileTimeOperation, FillDataResult, FindData,
@@ -279,7 +279,7 @@ impl FileSystemHandler for TestHandler {
 	fn create_file(
 		&self,
 		request: &dokan::CreateFileRequest<'_, Self>,
-	) -> Result<CreateFileInfo<Self::Context>, NTSTATUS> {
+	) -> OperationResult<CreateFileInfo<Self::Context>> {
 		let file_name = request.path;
 		let desired_access = request.desired_access.bits();
 		let file_attributes = request.file_attributes.bits();
@@ -1621,7 +1621,7 @@ impl Iterator for DirectoryChangeIterator {
 					),
 					TRUE
 				);
-				assert_eq!(self.overlapped.Internal, STATUS_SUCCESS as usize);
+				assert_eq!(self.overlapped.Internal, STATUS_SUCCESS.into_raw() as usize);
 				assert_eq!(self.overlapped.InternalHigh, ret_len as usize);
 				assert_ne!(ret_len, 0);
 			}

@@ -193,7 +193,7 @@ fn test_is_name_in_expression() {
 
 /// Converts Win32 error (e.g. returned by [`GetLastError`]) to [`NTSTATUS`].
 pub fn map_win32_error_to_ntstatus(error: u32) -> NtStatus {
-	unsafe { DokanNtStatusFromWin32(error) }
+	NtStatus::from_raw(unsafe { DokanNtStatusFromWin32(error) })
 }
 
 #[test]
@@ -201,7 +201,7 @@ fn can_map_win32_error_to_ntstatus() {
 	use winapi::shared::{ntstatus::STATUS_INTERNAL_ERROR, winerror::ERROR_INTERNAL_ERROR};
 
 	assert_eq!(
-		map_win32_error_to_ntstatus(ERROR_INTERNAL_ERROR),
+		map_win32_error_to_ntstatus(ERROR_INTERNAL_ERROR).into_raw(),
 		STATUS_INTERNAL_ERROR
 	);
 }

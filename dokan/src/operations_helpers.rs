@@ -4,7 +4,7 @@ use crate::{NtStatus, status};
 
 pub type NtResult = Result<(), NtStatus>;
 
-pub fn wrap_nt_result<F: FnOnce() -> NtResult>(f: F) -> NtStatus {
+pub fn wrap_nt_result<F: FnOnce() -> NtResult>(f: F) -> i32 {
 	// Unwind safety is not a safety property here: the callback is abandoned
 	// after a panic and Dokany receives an error. Requiring user state to
 	// implement RefUnwindSafe incorrectly rejected normal mutex-based handlers.
@@ -14,6 +14,7 @@ pub fn wrap_nt_result<F: FnOnce() -> NtResult>(f: F) -> NtStatus {
 			Err(nt_status) => nt_status,
 		})
 		.unwrap_or(status::INTERNAL_ERROR)
+		.into_raw()
 }
 
 #[allow(unused_must_use)]

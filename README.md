@@ -16,6 +16,11 @@ attributes, create options, sharing modes, security information, volume
 features, owned handles, safe security buffers, and common NT status values.
 The ABI layer uses Microsoft's `windows-sys` internally.
 
+`NtStatus` has binding-neutral `from_raw`/`into_raw` methods, which work
+directly with the integer aliases used by `windows-sys` and legacy `winapi`.
+Applications using Microsoft's projected `windows` crate can enable
+`dokan`'s `windows-interop` feature for direct `From` conversions.
+
 # Build
 
 The Rust crates use the Rust 2024 edition and require Rust 1.85 or newer.

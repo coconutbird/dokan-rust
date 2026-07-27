@@ -1,13 +1,74 @@
-use std::{ffi::c_void, fmt, ptr::NonNull};
+use std::{error::Error, ffi::c_void, fmt, ptr::NonNull};
 
 use bitflags::bitflags;
 use dokan_sys::DOKAN_IO_SECURITY_CONTEXT;
 
-/// Native NT status value returned to Dokany.
+/// Native NT status returned to Dokany.
 ///
-/// This is intentionally represented by its stable ABI type instead of exposing
-/// a binding-crate-specific `NTSTATUS` alias.
-pub type NtStatus = i32;
+/// This crate-owned transparent wrapper keeps the public API independent from
+/// `windows`, `windows-sys`, and `winapi`. Use [`from_raw`](Self::from_raw) and
+/// [`into_raw`](Self::into_raw) when interoperating with any C-style binding.
+#[repr(transparent)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct NtStatus(i32);
+
+impl NtStatus {
+	#[must_use]
+	pub const fn from_raw(value: i32) -> Self {
+		Self(value)
+	}
+
+	#[must_use]
+	pub const fn into_raw(self) -> i32 {
+		self.0
+	}
+
+	/// Whether the status represents success according to NT semantics.
+	#[must_use]
+	pub const fn is_success(self) -> bool {
+		self.0 >= 0
+	}
+}
+
+impl From<i32> for NtStatus {
+	fn from(value: i32) -> Self {
+		Self::from_raw(value)
+	}
+}
+
+impl From<NtStatus> for i32 {
+	fn from(value: NtStatus) -> Self {
+		value.into_raw()
+	}
+}
+
+#[cfg(feature = "windows-interop")]
+impl From<windows::Win32::Foundation::NTSTATUS> for NtStatus {
+	fn from(value: windows::Win32::Foundation::NTSTATUS) -> Self {
+		Self::from_raw(value.0)
+	}
+}
+
+#[cfg(feature = "windows-interop")]
+impl From<NtStatus> for windows::Win32::Foundation::NTSTATUS {
+	fn from(value: NtStatus) -> Self {
+		Self(value.into_raw())
+	}
+}
+
+impl fmt::Debug for NtStatus {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "NtStatus(0x{:08X})", self.0 as u32)
+	}
+}
+
+impl fmt::Display for NtStatus {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "NT status 0x{:08X}", self.0 as u32)
+	}
+}
+
+impl Error for NtStatus {}
 
 /// Raw Windows access-mask value.
 ///
@@ -238,5 +299,29 @@ impl<'a> SecurityContext<'a> {
 			ptr: ptr.cast(),
 			_marker: std::marker::PhantomData,
 		})
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::NtStatus;
+
+	#[test]
+	fn nt_status_preserves_raw_bits_and_semantics() {
+		let success = NtStatus::from_raw(0);
+		let failure = NtStatus::from_raw(0xC000_0022_u32 as i32);
+
+		assert!(success.is_success());
+		assert!(!failure.is_success());
+		assert_eq!(failure.into_raw() as u32, 0xC000_0022);
+		assert_eq!(format!("{failure}"), "NT status 0xC0000022");
+	}
+
+	#[cfg(feature = "windows-interop")]
+	#[test]
+	fn nt_status_converts_to_projected_windows_type() {
+		let status = NtStatus::from_raw(0xC000_0022_u32 as i32);
+		let windows_status: windows::Win32::Foundation::NTSTATUS = status.into();
+		assert_eq!(NtStatus::from(windows_status), status);
 	}
 }
