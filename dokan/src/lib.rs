@@ -14,13 +14,13 @@
 //!
 //! The same explanations with a few lines of code: see [the MemFS example](https://github.com/dokan-dev/dokan-rust/blob/master/dokan/examples/memfs/main.rs#L1330)!
 //!
-//! Please note that some of the constants from Win32 API that might be used when interacting with
-//! this crate are not provided directly here. However, you can easily find them in the
-//! [`winapi`] crate.
+//! The high-level API provides typed access rights, attributes, create options,
+//! sharing modes, volume features, security information, and common
+//! [`status`] values. Applications do not need a Windows binding crate merely
+//! to implement [`FileSystemHandler`].
 //!
 //! [Dokan]: https://dokan-dev.github.io/
 //! [`dokan-sys`]: https://crates.io/crates/dokan-sys
-//! [`winapi`]: https://crates.io/crates/winapi
 
 mod data;
 mod file_system;
@@ -28,43 +28,80 @@ mod file_system_handler;
 mod notify;
 mod operations;
 mod operations_helpers;
+pub mod status;
 mod to_file_time;
-
-#[cfg(test)]
-mod usage_tests;
+mod types;
 
 use dokan_sys::*;
+use std::sync::{Mutex, OnceLock};
 use widestring::U16CStr;
-use winapi::{
-	shared::{
-		minwindef::{DWORD, FALSE, TRUE},
-		ntdef::NTSTATUS,
-	},
-	um::{errhandlingapi::GetLastError, winnt::ACCESS_MASK},
-};
+use windows_sys::Win32::Foundation::GetLastError;
 
-pub use crate::{data::*, file_system::*, file_system_handler::*, notify::*};
+const FALSE: i32 = 0;
+const TRUE: i32 = 1;
+
+pub use crate::{data::*, file_system::*, file_system_handler::*, notify::*, types::*};
 
 /// Re-exported from `dokan-sys` for convenience.
 pub use dokan_sys::{
-	DOKAN_DRIVER_NAME as DRIVER_NAME, DOKAN_IO_SECURITY_CONTEXT as IO_SECURITY_CONTEXT,
-	DOKAN_MAJOR_API_VERSION as MAJOR_API_VERSION, DOKAN_NP_NAME as NP_NAME,
-	DOKAN_VERSION as WRAPPER_VERSION,
+	DOKAN_DRIVER_NAME as DRIVER_NAME, DOKAN_MAJOR_API_VERSION as MAJOR_API_VERSION,
+	DOKAN_NP_NAME as NP_NAME, DOKAN_VERSION as WRAPPER_VERSION,
 };
 
 /// Initializes all required Dokan internal resources.
 ///
 /// This needs to be called only once before trying to use other functions for the first time.
 /// Otherwise they will fail and raise an exception.
+fn runtime_users() -> &'static Mutex<usize> {
+	static USERS: OnceLock<Mutex<usize>> = OnceLock::new();
+	USERS.get_or_init(|| Mutex::new(0))
+}
+
+pub(crate) struct RuntimeGuard;
+
+impl RuntimeGuard {
+	pub(crate) fn acquire() -> Self {
+		let mut users = runtime_users()
+			.lock()
+			.expect("Dokany runtime lock poisoned");
+		if *users == 0 {
+			unsafe { DokanInit() }
+		}
+		*users += 1;
+		Self
+	}
+}
+
+impl Drop for RuntimeGuard {
+	fn drop(&mut self) {
+		release_runtime();
+	}
+}
+
+fn release_runtime() {
+	let mut users = runtime_users()
+		.lock()
+		.expect("Dokany runtime lock poisoned");
+	assert!(*users != 0, "shutdown called without a matching init");
+	*users -= 1;
+	if *users == 0 {
+		unsafe { DokanShutdown() }
+	}
+}
+
+/// Acquires one process-wide reference to the Dokany runtime.
+///
+/// New code normally does not need this function: mounted filesystems acquire
+/// and release the runtime automatically.
 pub fn init() {
-	unsafe { DokanInit() }
+	std::mem::forget(RuntimeGuard::acquire());
 }
 
 /// Releases all allocated resources by [`init`] when they are no longer needed.
 ///
 /// This should be called when the application no longer expects to create a new FileSystem and after all devices are unmount.
 pub fn shutdown() {
-	unsafe { DokanShutdown() }
+	release_runtime();
 }
 
 /// Gets version of the loaded Dokan library.
@@ -113,7 +150,9 @@ pub fn is_name_in_expression(
 
 #[test]
 fn test_is_name_in_expression() {
-	use usage_tests::convert_str;
+	use widestring::U16CString;
+
+	let convert_str = |value: &str| U16CString::from_str(value).unwrap();
 
 	assert!(is_name_in_expression(
 		convert_str("foo"),
@@ -153,7 +192,7 @@ fn test_is_name_in_expression() {
 }
 
 /// Converts Win32 error (e.g. returned by [`GetLastError`]) to [`NTSTATUS`].
-pub fn map_win32_error_to_ntstatus(error: DWORD) -> NTSTATUS {
+pub fn map_win32_error_to_ntstatus(error: u32) -> NtStatus {
 	unsafe { DokanNtStatusFromWin32(error) }
 }
 
@@ -167,7 +206,7 @@ fn can_map_win32_error_to_ntstatus() {
 	);
 }
 
-/// For convenience, returns an `Err(`[`NTSTATUS`]`)` from [`GetLastError`] if the condition is `false`.
+/// Converts the current thread's Win32 last-error value when `condition` is false.
 ///
 /// It builds upon [`map_win32_error_to_ntstatus`].
 ///
@@ -176,30 +215,7 @@ fn can_map_win32_error_to_ntstatus() {
 /// For instance, `ReadFile` and `WriteFile` in asynchronous mode are successful if they
 /// return `FALSE` and `GetLastError` returns `ERROR_IO_PENDING`.
 ///
-/// # Example
-///
-/// ```
-/// # use std::ptr;
-/// #
-/// # use dokan::win32_ensure;
-/// # use widestring::U16CString;
-/// # use winapi::{shared::ntdef::NTSTATUS, um::processenv::GetCurrentDirectoryW};
-/// #
-/// fn get_current_directory() -> Result<U16CString, NTSTATUS> {
-/// 	unsafe {
-/// 		let len = GetCurrentDirectoryW(0, ptr::null_mut());
-/// 		win32_ensure(len != 0)?;
-///
-/// 		let mut buffer = Vec::with_capacity(len as usize);
-/// 		let actual_len = GetCurrentDirectoryW(len, buffer.as_mut_ptr());
-/// 		win32_ensure(actual_len != 0)?;
-/// 		assert_eq!(actual_len, len);
-///
-/// 		Ok(U16CString::from_vec_unchecked(buffer))
-/// 	}
-/// }
-/// ```
-pub fn win32_ensure(condition: bool) -> Result<(), NTSTATUS> {
+pub fn win32_ensure(condition: bool) -> Result<(), NtStatus> {
 	match condition {
 		true => Ok(()),
 		false => Err(map_win32_error_to_ntstatus(unsafe { GetLastError() })),
@@ -214,7 +230,7 @@ pub fn win32_ensure(condition: bool) -> Result<(), NTSTATUS> {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct UserCreateFileFlags {
 	/// The requested access to the file.
-	pub desired_access: ACCESS_MASK,
+	pub desired_access: AccessRights,
 	/// The file attributes and flags.
 	pub flags_and_attributes: u32,
 	/// The action to take on the file that exists or does not exist.
@@ -230,33 +246,34 @@ pub struct UserCreateFileFlags {
 /// [`CreateFile`]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew
 /// [`IRP_MJ_CREATE`]: https://docs.microsoft.com/en-us/windows-hardware/drivers/kernel/irp-mj-create
 pub fn map_kernel_to_user_create_file_flags(
-	desired_access: ACCESS_MASK,
-	file_attributes: u32,
-	create_options: u32,
-	create_disposition: u32,
+	desired_access: AccessRights,
+	file_attributes: FileAttributes,
+	create_options: CreateOptions,
+	create_disposition: CreateDisposition,
 ) -> UserCreateFileFlags {
-	let mut result = UserCreateFileFlags {
-		desired_access: 0,
-		flags_and_attributes: 0,
-		creation_disposition: 0,
-	};
+	let mut mapped_access = 0;
+	let mut flags_and_attributes = 0;
+	let mut creation_disposition = 0;
 	unsafe {
 		DokanMapKernelToUserCreateFileFlags(
-			desired_access,
-			file_attributes,
-			create_options,
-			create_disposition,
-			&mut result.desired_access,
-			&mut result.flags_and_attributes,
-			&mut result.creation_disposition,
+			desired_access.bits(),
+			file_attributes.bits(),
+			create_options.bits(),
+			create_disposition as u32,
+			&mut mapped_access,
+			&mut flags_and_attributes,
+			&mut creation_disposition,
 		);
 	}
-	result
+	UserCreateFileFlags {
+		desired_access: AccessRights::from_bits_retain(mapped_access),
+		flags_and_attributes,
+		creation_disposition,
+	}
 }
 
 #[test]
 fn test_map_kernel_to_user_create_file_flags() {
-	use dokan_sys::win32::{FILE_OPEN, FILE_WRITE_THROUGH};
 	use winapi::um::{
 		fileapi::OPEN_EXISTING,
 		winbase::FILE_FLAG_WRITE_THROUGH,
@@ -267,13 +284,13 @@ fn test_map_kernel_to_user_create_file_flags() {
 	};
 
 	let result = map_kernel_to_user_create_file_flags(
-		FILE_ALL_ACCESS,
-		FILE_ATTRIBUTE_NORMAL,
-		FILE_WRITE_THROUGH,
-		FILE_OPEN,
+		AccessRights::from_bits_retain(FILE_ALL_ACCESS),
+		FileAttributes::NORMAL,
+		CreateOptions::WRITE_THROUGH,
+		CreateDisposition::Open,
 	);
 	assert_eq!(
-		result.desired_access,
+		result.desired_access.bits(),
 		GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL
 	);
 	assert_eq!(
@@ -324,7 +341,7 @@ pub fn set_lib_debug_mode(enabled: bool) {
 /// Returns `true` on success.
 #[must_use]
 pub fn set_driver_debug_mode(enabled: bool) -> bool {
-	unsafe { DokanSetDebugMode(if enabled { TRUE } else { FALSE }) == TRUE }
+	unsafe { DokanSetDebugMode(u32::from(enabled)) == TRUE }
 }
 
 #[test]

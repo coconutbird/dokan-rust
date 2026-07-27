@@ -1,23 +1,27 @@
-use std::{iter::Map, mem::transmute, slice};
+use std::{iter::Map, slice};
 
 use dokan_sys::{
 	win32::{FILE_DEVICE_DISK_FILE_SYSTEM, FILE_DEVICE_NETWORK_FILE_SYSTEM},
 	*,
 };
 use widestring::U16CStr;
-use winapi::shared::minwindef::ULONG;
 
 /// Mount point device type.
-#[repr(u32)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeviceType {
-	Disk = FILE_DEVICE_DISK_FILE_SYSTEM,
-	Network = FILE_DEVICE_NETWORK_FILE_SYSTEM,
+	Disk,
+	Network,
+	/// A device type introduced by a newer or nonstandard Dokany build.
+	Unknown(u32),
 }
 
 impl From<u32> for DeviceType {
 	fn from(value: u32) -> Self {
-		unsafe { transmute(value) }
+		match value {
+			FILE_DEVICE_DISK_FILE_SYSTEM => Self::Disk,
+			FILE_DEVICE_NETWORK_FILE_SYSTEM => Self::Network,
+			value => Self::Unknown(value),
+		}
 	}
 }
 
@@ -100,7 +104,7 @@ impl Drop for MountPointList {
 /// Returns `None` in case of error.
 pub fn list_mount_points(unc_only: bool) -> Option<MountPointList> {
 	unsafe {
-		let mut len: ULONG = 0;
+		let mut len: u32 = 0;
 		let list_ptr = DokanGetMountPointList(unc_only.into(), &mut len);
 		if list_ptr.is_null() {
 			None
@@ -109,35 +113,4 @@ pub fn list_mount_points(unc_only: bool) -> Option<MountPointList> {
 			Some(MountPointList { list_ptr, len })
 		}
 	}
-}
-
-#[test]
-fn can_list_mount_points() {
-	use std::process;
-
-	use regex::Regex;
-	use winapi::{shared::minwindef::TRUE, um::processthreadsapi::ProcessIdToSessionId};
-
-	use crate::usage_tests::{convert_str, with_test_drive};
-
-	with_test_drive(|_| unsafe {
-		let list = list_mount_points(false).unwrap();
-		let list_as_vec: Vec<_> = list.into_iter().collect();
-		assert_eq!(list_as_vec.len(), 1);
-		let info = &list_as_vec[0];
-		assert_eq!(info.device_type, DeviceType::Disk);
-		assert_eq!(
-			info.mount_point,
-			Some(convert_str("\\DosDevices\\Z:").as_ref())
-		);
-		assert_eq!(info.unc_name, None);
-		assert!(
-			Regex::new(r"^\\Device\\Volume\{[0-9a-z]{8}-([0-9a-z]{4}-){3}[0-9a-z]{12}\}$")
-				.unwrap()
-				.is_match(&info.device_name.to_string_lossy())
-		);
-		let mut session_id = 0;
-		assert_eq!(ProcessIdToSessionId(process::id(), &mut session_id), TRUE);
-		assert_eq!(info.session_id, session_id);
-	});
 }

@@ -1,9 +1,6 @@
-use std::{
-	mem::transmute_copy,
-	time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use winapi::shared::minwindef::FILETIME;
+use windows_sys::Win32::Foundation::FILETIME;
 
 use crate::to_file_time::FILETIME_OFFSET;
 
@@ -20,22 +17,32 @@ pub enum FileTimeOperation {
 	ResumeUpdate,
 }
 
-impl From<*const FILETIME> for FileTimeOperation {
-	fn from(time: *const FILETIME) -> Self {
-		unsafe {
-			let time_val = transmute_copy::<_, i64>(&*time);
-			match time_val {
-				0 => FileTimeOperation::DontChange,
-				-1 => FileTimeOperation::DisableUpdate,
-				-2 => FileTimeOperation::ResumeUpdate,
-				_ => {
-					let time_val = time_val as u64;
-					FileTimeOperation::SetTime(
-						UNIX_EPOCH - FILETIME_OFFSET
-							+ Duration::from_micros(time_val / 10)
-							+ Duration::from_nanos(time_val % 10 * 100),
-					)
-				}
+impl FileTimeOperation {
+	/// Converts the nullable `FILETIME` pointer supplied by Dokany.
+	///
+	/// # Safety
+	///
+	/// A non-null `time` must point to a readable, initialized [`FILETIME`].
+	pub(crate) unsafe fn from_raw(time: *const FILETIME) -> Self {
+		if time.is_null() {
+			return Self::DontChange;
+		}
+
+		// FILETIME is two little-endian 32-bit words. Reading its fields avoids
+		// relying on the layout of LARGE_INTEGER or using a transmute.
+		let time = unsafe { &*time };
+		let bits = u64::from(time.dwLowDateTime) | (u64::from(time.dwHighDateTime) << 32);
+		match bits as i64 {
+			0 => Self::DontChange,
+			-1 => Self::DisableUpdate,
+			-2 => Self::ResumeUpdate,
+			_ => {
+				let ticks = bits;
+				Self::SetTime(
+					UNIX_EPOCH - FILETIME_OFFSET
+						+ Duration::from_micros(ticks / 10)
+						+ Duration::from_nanos(ticks % 10 * 100),
+				)
 			}
 		}
 	}

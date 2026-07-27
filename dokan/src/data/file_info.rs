@@ -1,8 +1,8 @@
 use std::time::SystemTime;
 
-use winapi::um::fileapi::BY_HANDLE_FILE_INFORMATION;
+use windows_sys::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION;
 
-use crate::to_file_time::ToFileTime;
+use crate::{FileAttributes, to_file_time::ToFileTime};
 
 /// Information about a file returned by [`FileSystemHandler::get_file_information`].
 ///
@@ -14,7 +14,7 @@ pub struct FileInfo {
 	/// It can be combination of one or more [file attribute constants] defined by Windows.
 	///
 	/// [file attribute constants]: https://docs.microsoft.com/en-us/windows/win32/fileio/file-attribute-constants
-	pub attributes: u32,
+	pub attributes: FileAttributes,
 
 	/// The time when the file was created.
 	pub creation_time: SystemTime,
@@ -36,9 +36,9 @@ pub struct FileInfo {
 }
 
 impl FileInfo {
-	pub fn to_raw_struct(&self) -> BY_HANDLE_FILE_INFORMATION {
+	pub(crate) fn to_raw_struct(&self) -> BY_HANDLE_FILE_INFORMATION {
 		BY_HANDLE_FILE_INFORMATION {
-			dwFileAttributes: self.attributes,
+			dwFileAttributes: self.attributes.bits(),
 			ftCreationTime: self.creation_time.to_filetime(),
 			ftLastAccessTime: self.last_access_time.to_filetime(),
 			ftLastWriteTime: self.last_write_time.to_filetime(),

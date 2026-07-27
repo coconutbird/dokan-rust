@@ -1,53 +1,56 @@
 use std::{
 	marker::PhantomData,
 	os::windows::prelude::{FromRawHandle, OwnedHandle},
+	ptr::NonNull,
 	time::Duration,
 };
 
+use crate::{MountFlags, NtStatus, file_system_handler::FileSystemHandler, status};
 use dokan_sys::{
-	DokanOpenRequestorToken, DokanResetTimeout, DOKAN_FILE_INFO, DOKAN_OPTIONS, PDOKAN_FILE_INFO,
+	DOKAN_FILE_INFO, DOKAN_OPTIONS, DokanOpenRequestorToken, DokanResetTimeout, PDOKAN_FILE_INFO,
 };
 use widestring::U16CStr;
-use winapi::{shared::minwindef::TRUE, um::handleapi::INVALID_HANDLE_VALUE};
-
-use crate::{file_system_handler::FileSystemHandler, MountFlags};
 
 /// Information about the current operation.
 #[derive(Debug)]
-pub struct OperationInfo<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h> {
-	file_info: PDOKAN_FILE_INFO,
-	phantom_handler: PhantomData<&'h FSH>,
-	phantom_context: PhantomData<&'c FSH::Context>,
+pub struct OperationInfo<'a, FSH: FileSystemHandler> {
+	file_info: NonNull<DOKAN_FILE_INFO>,
+	_callback: PhantomData<&'a FSH>,
 }
 
-impl<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h> OperationInfo<'c, 'h, FSH> {
-	pub fn new(file_info: PDOKAN_FILE_INFO) -> Self {
+impl<FSH: FileSystemHandler> OperationInfo<'_, FSH> {
+	/// Wraps the operation record supplied by Dokany.
+	///
+	/// This constructor is crate-private because validity is guaranteed only
+	/// while Dokany is executing a callback.
+	pub(crate) fn new(file_info: PDOKAN_FILE_INFO) -> Self {
 		OperationInfo {
-			file_info,
-			phantom_handler: PhantomData,
-			phantom_context: PhantomData,
+			file_info: NonNull::new(file_info).expect("Dokany supplied a null DOKAN_FILE_INFO"),
+			_callback: PhantomData,
 		}
 	}
 
-	pub fn file_info(&self) -> &DOKAN_FILE_INFO {
-		unsafe { &*self.file_info }
+	pub(crate) fn file_info(&self) -> &DOKAN_FILE_INFO {
+		unsafe { self.file_info.as_ref() }
 	}
 
-	pub fn mount_options(&self) -> &DOKAN_OPTIONS {
+	pub(crate) fn mount_options(&self) -> &DOKAN_OPTIONS {
 		unsafe { &*self.file_info().DokanOptions }
 	}
 
-	pub fn handler(&self) -> &'h FSH {
+	pub(crate) fn handler(&self) -> &FSH {
 		unsafe { &*(self.mount_options().GlobalContext as *const _) }
 	}
 
-	pub fn context(&self) -> &'c FSH::Context {
-		unsafe { &*(self.file_info().Context as *const _) }
+	pub(crate) fn context(&self) -> Result<&FSH::Context, NtStatus> {
+		NonNull::new(self.file_info().Context as *mut FSH::Context)
+			.map(|context| unsafe { context.as_ref() })
+			.ok_or(status::INVALID_HANDLE)
 	}
 
-	pub fn drop_context(&mut self) {
+	pub(crate) fn drop_context(&mut self) {
 		unsafe {
-			let info = &mut *self.file_info;
+			let info = self.file_info.as_mut();
 			let ptr = info.Context as *mut FSH::Context;
 			if !ptr.is_null() {
 				drop(Box::from_raw(ptr));
@@ -146,7 +149,8 @@ impl<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h> OperationInfo<'c, 'h, FSH>
 	/// Returns `true` on success.
 	#[must_use]
 	pub fn reset_timeout(&self, timeout: Duration) -> bool {
-		unsafe { DokanResetTimeout(timeout.as_millis() as u32, self.file_info) == TRUE }
+		let millis = timeout.as_millis().min(u128::from(u32::MAX)) as u32;
+		unsafe { DokanResetTimeout(millis, self.file_info.as_ptr()) != 0 }
 	}
 
 	/// Gets the access token associated with the calling process.
@@ -154,8 +158,8 @@ impl<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h> OperationInfo<'c, 'h, FSH>
 	/// Returns `None` on error.
 	pub fn requester_token(&self) -> Option<OwnedHandle> {
 		unsafe {
-			let value = DokanOpenRequestorToken(self.file_info);
-			if value == INVALID_HANDLE_VALUE {
+			let value = DokanOpenRequestorToken(self.file_info.as_ptr());
+			if value == (-1_isize as std::os::windows::io::RawHandle) {
 				None
 			} else {
 				Some(OwnedHandle::from_raw_handle(value))

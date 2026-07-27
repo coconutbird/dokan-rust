@@ -1,11 +1,12 @@
-use std::{mem::transmute, time::SystemTime};
+use std::time::SystemTime;
 
 use dokan_sys::win32::WIN32_FIND_STREAM_DATA;
 use widestring::U16CString;
-use winapi::{shared::minwindef::MAX_PATH, um::minwinbase::WIN32_FIND_DATAW};
+use windows_sys::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
 
-use crate::{to_file_time::ToFileTime, FillDataError, FillDataResult};
+use crate::{FileAttributes, FillDataError, FillDataResult, to_file_time::ToFileTime};
 
+const MAX_PATH: usize = 260;
 pub(crate) trait ToRawStruct<T> {
 	fn to_raw_struct(&self) -> Option<T>;
 }
@@ -22,7 +23,7 @@ pub struct FindData {
 	/// It can be combination of one or more [file attribute constants] defined by Windows.
 	///
 	/// [file attribute constants]: https://docs.microsoft.com/en-us/windows/win32/fileio/file-attribute-constants
-	pub attributes: u32,
+	pub attributes: FileAttributes,
 
 	/// The time when the file was created.
 	pub creation_time: SystemTime,
@@ -47,7 +48,7 @@ impl ToRawStruct<WIN32_FIND_DATAW> for FindData {
 			let mut c_file_name = [0; MAX_PATH];
 			c_file_name[..name_slice.len()].copy_from_slice(name_slice);
 			Some(WIN32_FIND_DATAW {
-				dwFileAttributes: self.attributes,
+				dwFileAttributes: self.attributes.bits(),
 				ftCreationTime: self.creation_time.to_filetime(),
 				ftLastAccessTime: self.last_access_time.to_filetime(),
 				ftLastWriteTime: self.last_write_time.to_filetime(),
@@ -90,7 +91,8 @@ impl ToRawStruct<WIN32_FIND_STREAM_DATA> for FindStreamData {
 			let mut c_stream_name = [0; MAX_STREAM_NAME];
 			c_stream_name[..name_slice.len()].copy_from_slice(name_slice);
 			Some(WIN32_FIND_STREAM_DATA {
-				StreamSize: unsafe { transmute(self.size) },
+				// LARGE_INTEGER is represented as a signed 64-bit quad part by winapi.
+				StreamSize: self.size,
 				cStreamName: c_stream_name,
 			})
 		} else {
@@ -100,7 +102,7 @@ impl ToRawStruct<WIN32_FIND_STREAM_DATA> for FindStreamData {
 }
 
 pub(crate) fn wrap_fill_data<T, U: ToRawStruct<T>, TArg: Copy, TResult: PartialEq>(
-	fill_data: unsafe extern "stdcall" fn(*mut T, TArg) -> TResult,
+	fill_data: unsafe extern "system" fn(*mut T, TArg) -> TResult,
 	fill_data_arg: TArg,
 	success_value: TResult,
 ) -> impl FnMut(&U) -> FillDataResult {
@@ -119,7 +121,6 @@ mod tests {
 	use std::ptr;
 
 	use dokan_sys::PDOKAN_FILE_INFO;
-	use winapi::ctypes::c_int;
 
 	use super::*;
 
@@ -129,19 +130,15 @@ mod tests {
 
 	impl ToRawStruct<()> for ToRawStructStub {
 		fn to_raw_struct(&self) -> Option<()> {
-			if self.should_fail {
-				None
-			} else {
-				Some(())
-			}
+			if self.should_fail { None } else { Some(()) }
 		}
 	}
 
-	extern "stdcall" fn fill_data_stub(_data: *mut (), _info: PDOKAN_FILE_INFO) -> c_int {
+	extern "system" fn fill_data_stub(_data: *mut (), _info: PDOKAN_FILE_INFO) -> i32 {
 		0
 	}
 
-	extern "stdcall" fn failing_fill_data_stub(_data: *mut (), _info: PDOKAN_FILE_INFO) -> c_int {
+	extern "system" fn failing_fill_data_stub(_data: *mut (), _info: PDOKAN_FILE_INFO) -> i32 {
 		1
 	}
 

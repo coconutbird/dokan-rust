@@ -1,5 +1,7 @@
 use widestring::U16CString;
 
+use crate::VolumeFeatures;
+
 /// Information about volume returned by [`FileSystemHandler::get_volume_information`].
 ///
 /// [`FileSystemHandler::get_volume_information`]: crate::FileSystemHandler::get_volume_information
@@ -23,7 +25,7 @@ pub struct VolumeInfo {
 	///
 	/// [flags]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getvolumeinformationw#parameters
 	/// [`MountFlags::WRITE_PROTECT`]: crate::MountFlags::WRITE_PROTECT
-	pub fs_flags: u32,
+	pub features: VolumeFeatures,
 
 	/// Name of the file system.
 	///

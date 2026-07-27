@@ -7,22 +7,22 @@ use std::{
 	hash::{Hash, Hasher},
 	os::windows::io::AsRawHandle,
 	sync::{
-		atomic::{AtomicBool, AtomicU64, Ordering},
 		Arc, Mutex, RwLock, Weak,
+		atomic::{AtomicBool, AtomicU64, Ordering},
 	},
 	time::SystemTime,
 };
 
 use clap::{Arg, ArgAction, Command};
 use dokan::{
-	init, shutdown, unmount, CreateFileInfo, DiskSpaceInfo, FileInfo, FileSystemHandler,
-	FileSystemMounter, FileTimeOperation, FillDataError, FillDataResult, FindData, FindStreamData,
-	MountFlags, MountOptions, OperationInfo, OperationResult, VolumeInfo, IO_SECURITY_CONTEXT,
+	CreateFileInfo, DiskSpaceInfo, FileInfo, FileSystemHandler, FileSystemMounter,
+	FileTimeOperation, FillDataError, FillDataResult, FindData, FindStreamData, MountFlags,
+	MountOptions, OperationInfo, OperationResult, SecurityInformation, VolumeInfo, init, shutdown,
+	unmount,
 };
 use dokan_sys::win32::{
-	FILE_CREATE, FILE_DELETE_ON_CLOSE, FILE_DIRECTORY_FILE, FILE_MAXIMUM_DISPOSITION,
-	FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_IF, FILE_OVERWRITE, FILE_OVERWRITE_IF,
-	FILE_SUPERSEDE,
+	FILE_CREATE, FILE_DELETE_ON_CLOSE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN,
+	FILE_OPEN_IF, FILE_OVERWRITE, FILE_OVERWRITE_IF, FILE_SUPERSEDE,
 };
 use widestring::{U16CStr, U16CString, U16Str, U16String};
 use winapi::{
@@ -405,6 +405,7 @@ impl MemFsHandler {
 		self.id_counter.fetch_add(1, Ordering::Relaxed)
 	}
 
+	#[allow(clippy::too_many_arguments)]
 	fn create_new(
 		&self,
 		name: &FullName,
@@ -428,17 +429,18 @@ impl MemFsHandler {
 				token,
 				is_dir,
 			)?,
-			Arc::downgrade(&parent),
+			Arc::downgrade(parent),
 		);
 		let stream = if let Some(stream_info) = &name.stream_info {
 			if stream_info.check_default(is_dir)? {
 				None
 			} else {
 				let stream = Arc::new(RwLock::new(AltStream::new()));
-				assert!(stat
-					.alt_streams
-					.insert(EntryName(stream_info.name.to_owned()), Arc::clone(&stream))
-					.is_none());
+				assert!(
+					stat.alt_streams
+						.insert(EntryName(stream_info.name.to_owned()), Arc::clone(&stream))
+						.is_none()
+				);
 				Some(stream)
 			}
 		} else {
@@ -449,9 +451,11 @@ impl MemFsHandler {
 		} else {
 			Entry::File(Arc::new(FileEntry::new(stat)))
 		};
-		assert!(children
-			.insert(EntryName(name.file_name.to_owned()), entry.clone())
-			.is_none());
+		assert!(
+			children
+				.insert(EntryName(name.file_name.to_owned()), entry.clone())
+				.is_none()
+		);
 		parent.stat.write().unwrap().update_mtime(SystemTime::now());
 		let is_dir = is_dir && stream.is_some();
 		Ok(CreateFileInfo {
@@ -472,23 +476,20 @@ fn ignore_name_too_long(err: FillDataError) -> OperationResult<()> {
 	}
 }
 
-impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
+impl FileSystemHandler for MemFsHandler {
 	type Context = EntryHandle;
 
 	fn create_file(
-		&'h self,
-		file_name: &U16CStr,
-		security_context: &IO_SECURITY_CONTEXT,
-		desired_access: winnt::ACCESS_MASK,
-		file_attributes: u32,
-		_share_access: u32,
-		create_disposition: u32,
-		create_options: u32,
-		info: &mut OperationInfo<'c, 'h, Self>,
+		&self,
+		request: &dokan::CreateFileRequest<'_, Self>,
 	) -> OperationResult<CreateFileInfo<Self::Context>> {
-		if create_disposition > FILE_MAXIMUM_DISPOSITION {
-			return Err(STATUS_INVALID_PARAMETER);
-		}
+		let file_name = request.path;
+		let desired_access = request.desired_access.bits();
+		let file_attributes = request.file_attributes.bits();
+		let create_disposition = request.disposition as u32;
+		let create_options = request.options.bits();
+		let info = request.operation;
+		let security_context = request.security;
 		let delete_pending = create_options & FILE_DELETE_ON_CLOSE > 0;
 		let path_info = path::split_path(&self.root, file_name)?;
 		if let Some((name, parent)) = path_info {
@@ -505,9 +506,9 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 				let is_readonly = stat.attrs.value & winnt::FILE_ATTRIBUTE_READONLY > 0;
 				let is_hidden_system = create_disposition == FILE_OVERWRITE_IF
 					&& (stat.attrs.value & winnt::FILE_ATTRIBUTE_HIDDEN > 0
-						&& !(file_attributes & winnt::FILE_ATTRIBUTE_HIDDEN > 0)
+						&& file_attributes & winnt::FILE_ATTRIBUTE_HIDDEN == 0
 						|| stat.attrs.value & winnt::FILE_ATTRIBUTE_SYSTEM > 0
-							&& !(file_attributes & winnt::FILE_ATTRIBUTE_SYSTEM > 0));
+							&& file_attributes & winnt::FILE_ATTRIBUTE_SYSTEM == 0);
 				if is_readonly && delete_pending {
 					return Err(STATUS_CANNOT_DELETE);
 				}
@@ -527,9 +528,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 					} else {
 						let mut stat = entry.stat().write().unwrap();
 						let stream_name = EntryNameRef::new(stream_info.name);
-						if let Some(stream) =
-							stat.alt_streams.get(stream_name).map(|s| Arc::clone(s))
-						{
+						if let Some(stream) = stat.alt_streams.get(stream_name).map(Arc::clone) {
 							if stream.read().unwrap().delete_pending {
 								return Err(STATUS_DELETE_PENDING);
 							}
@@ -557,10 +556,14 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 							}
 							let stream = Arc::new(RwLock::new(AltStream::new()));
 							stat.update_atime(SystemTime::now());
-							assert!(stat
-								.alt_streams
-								.insert(EntryName(stream_info.name.to_owned()), Arc::clone(&stream))
-								.is_none());
+							assert!(
+								stat.alt_streams
+									.insert(
+										EntryName(stream_info.name.to_owned()),
+										Arc::clone(&stream)
+									)
+									.is_none()
+							);
 							Some((stream, true))
 						}
 					}
@@ -600,7 +603,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 						}
 						Ok(CreateFileInfo {
 							context: EntryHandle::new(
-								Entry::File(Arc::clone(&file)),
+								Entry::File(Arc::clone(file)),
 								None,
 								delete_pending,
 							),
@@ -615,7 +618,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 						match create_disposition {
 							FILE_OPEN | FILE_OPEN_IF => Ok(CreateFileInfo {
 								context: EntryHandle::new(
-									Entry::Directory(Arc::clone(&dir)),
+									Entry::Directory(Arc::clone(dir)),
 									None,
 									delete_pending,
 								),
@@ -638,7 +641,10 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 							&name,
 							file_attributes,
 							delete_pending,
-							security_context.AccessState.SecurityDescriptor,
+							security_context
+								.security_descriptor()
+								.map_or(std::ptr::null(), |descriptor| descriptor.as_ptr())
+								as winnt::PSECURITY_DESCRIPTOR,
 							token.as_raw_handle(),
 							&parent,
 							&mut children,
@@ -655,7 +661,10 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 							&name,
 							file_attributes | winnt::FILE_ATTRIBUTE_ARCHIVE,
 							delete_pending,
-							security_context.AccessState.SecurityDescriptor,
+							security_context
+								.security_descriptor()
+								.map_or(std::ptr::null(), |descriptor| descriptor.as_ptr())
+								as winnt::PSECURITY_DESCRIPTOR,
 							token.as_raw_handle(),
 							&parent,
 							&mut children,
@@ -686,18 +695,18 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 	}
 
 	fn close_file(
-		&'h self,
+		&self,
 		_file_name: &U16CStr,
-		_info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		_info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) {
 		let mut stat = context.entry.stat().write().unwrap();
-		if let Some(mtime) = context.mtime_delayed.lock().unwrap().clone() {
+		if let Some(mtime) = *context.mtime_delayed.lock().unwrap() {
 			if mtime > stat.mtime {
 				stat.mtime = mtime;
 			}
 		}
-		if let Some(atime) = context.atime_delayed.lock().unwrap().clone() {
+		if let Some(atime) = *context.atime_delayed.lock().unwrap() {
 			if atime > stat.atime {
 				stat.atime = atime;
 			}
@@ -705,12 +714,12 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 	}
 
 	fn read_file(
-		&'h self,
+		&self,
 		_file_name: &U16CStr,
 		offset: i64,
 		buffer: &mut [u8],
-		_info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		_info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<u32> {
 		let mut do_read = |data: &Vec<_>| {
 			let offset = offset as usize;
@@ -729,12 +738,12 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 	}
 
 	fn write_file(
-		&'h self,
+		&self,
 		_file_name: &U16CStr,
 		offset: i64,
 		buffer: &[u8],
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<u32> {
 		let do_write = |data: &mut Vec<_>| {
 			let offset = if info.write_to_eof() {
@@ -771,24 +780,26 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 	}
 
 	fn flush_file_buffers(
-		&'h self,
+		&self,
 		_file_name: &U16CStr,
-		_info: &OperationInfo<'c, 'h, Self>,
-		_context: &'c Self::Context,
+		_info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		Ok(())
 	}
 
 	fn get_file_information(
-		&'h self,
+		&self,
 		_file_name: &U16CStr,
-		_info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		_info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<FileInfo> {
 		let stat = context.entry.stat().read().unwrap();
 		let alt_stream = context.alt_stream.read().unwrap();
 		Ok(FileInfo {
-			attributes: stat.attrs.get_output_attrs(context.is_dir()),
+			attributes: dokan::FileAttributes::from_bits_retain(
+				stat.attrs.get_output_attrs(context.is_dir()),
+			),
 			creation_time: stat.ctime,
 			last_access_time: stat.atime,
 			last_write_time: stat.mtime,
@@ -806,11 +817,11 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 	}
 
 	fn find_files(
-		&'h self,
+		&self,
 		_file_name: &U16CStr,
 		mut fill_find_data: impl FnMut(&FindData) -> FillDataResult,
-		_info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		_info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		if context.alt_stream.read().unwrap().is_some() {
 			return Err(STATUS_INVALID_DEVICE_REQUEST);
@@ -820,7 +831,9 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 			for (k, v) in children.iter() {
 				let stat = v.stat().read().unwrap();
 				fill_find_data(&FindData {
-					attributes: stat.attrs.get_output_attrs(v.is_dir()),
+					attributes: dokan::FileAttributes::from_bits_retain(
+						stat.attrs.get_output_attrs(v.is_dir()),
+					),
 					creation_time: stat.ctime,
 					last_access_time: stat.atime,
 					last_write_time: stat.mtime,
@@ -839,26 +852,26 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 	}
 
 	fn set_file_attributes(
-		&'h self,
+		&self,
 		_file_name: &U16CStr,
-		file_attributes: u32,
-		_info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		file_attributes: dokan::FileAttributes,
+		_info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		let mut stat = context.entry.stat().write().unwrap();
-		stat.attrs = Attributes::new(file_attributes);
+		stat.attrs = Attributes::new(file_attributes.bits());
 		context.update_atime(&mut stat, SystemTime::now());
 		Ok(())
 	}
 
 	fn set_file_time(
-		&'h self,
+		&self,
 		_file_name: &U16CStr,
 		creation_time: FileTimeOperation,
 		last_access_time: FileTimeOperation,
 		last_write_time: FileTimeOperation,
-		_info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		_info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		let mut stat = context.entry.stat().write().unwrap();
 		let process_time_info = |time_info: &FileTimeOperation,
@@ -880,10 +893,10 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 	}
 
 	fn delete_file(
-		&'h self,
+		&self,
 		_file_name: &U16CStr,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		if context.entry.stat().read().unwrap().attrs.value & winnt::FILE_ATTRIBUTE_READONLY > 0 {
 			return Err(STATUS_CANNOT_DELETE);
@@ -898,10 +911,10 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 	}
 
 	fn delete_directory(
-		&'h self,
+		&self,
 		_file_name: &U16CStr,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		if context.alt_stream.read().unwrap().is_some() {
 			return Err(STATUS_INVALID_DEVICE_REQUEST);
@@ -926,12 +939,12 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 	}
 
 	fn move_file(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
 		new_file_name: &U16CStr,
 		replace_if_existing: bool,
-		_info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		_info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		let src_path = file_name.as_slice();
 		let offset = src_path
@@ -1001,10 +1014,11 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 						stream.data = data.clone();
 						data.clear();
 						let stream = Arc::new(RwLock::new(stream));
-						assert!(stat
-							.alt_streams
-							.insert(EntryName(dst_name.to_owned()), Arc::clone(&stream))
-							.is_none());
+						assert!(
+							stat.alt_streams
+								.insert(EntryName(dst_name.to_owned()), Arc::clone(&stream))
+								.is_none()
+						);
 						*context.alt_stream.write().unwrap() = Some(stream);
 					} else {
 						return Err(STATUS_OBJECT_NAME_INVALID);
@@ -1088,9 +1102,11 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 				check_can_move(&mut children)?;
 				// Remove first in case moving to the same name.
 				let entry = children.remove(src_name_ref).unwrap();
-				assert!(children
-					.insert(EntryName(dst_name.file_name.to_owned()), entry)
-					.is_none());
+				assert!(
+					children
+						.insert(EntryName(dst_name.file_name.to_owned()), entry)
+						.is_none()
+				);
 				src_parent.stat.write().unwrap().update_mtime(now);
 				context.update_atime(&mut context.entry.stat().write().unwrap(), now);
 			} else {
@@ -1098,9 +1114,11 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 				let mut dst_children = dst_parent.children.write().unwrap();
 				check_can_move(&mut dst_children)?;
 				let entry = src_children.remove(src_name_ref).unwrap();
-				assert!(dst_children
-					.insert(EntryName(dst_name.file_name.to_owned()), entry)
-					.is_none());
+				assert!(
+					dst_children
+						.insert(EntryName(dst_name.file_name.to_owned()), entry)
+						.is_none()
+				);
 				src_parent.stat.write().unwrap().update_mtime(now);
 				dst_parent.stat.write().unwrap().update_mtime(now);
 				let mut stat = context.entry.stat().write().unwrap();
@@ -1112,11 +1130,11 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 	}
 
 	fn set_end_of_file(
-		&'h self,
+		&self,
 		_file_name: &U16CStr,
 		offset: i64,
-		_info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		_info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		let alt_stream = context.alt_stream.read().unwrap();
 		let ret = if let Some(stream) = alt_stream.as_ref() {
@@ -1138,11 +1156,11 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 	}
 
 	fn set_allocation_size(
-		&'h self,
+		&self,
 		_file_name: &U16CStr,
 		alloc_size: i64,
-		_info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		_info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		let set_alloc = |data: &mut Vec<_>| {
 			let alloc_size = alloc_size as usize;
@@ -1177,8 +1195,8 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 	}
 
 	fn get_disk_free_space(
-		&'h self,
-		_info: &OperationInfo<'c, 'h, Self>,
+		&self,
+		_info: &OperationInfo<'_, Self>,
 	) -> OperationResult<DiskSpaceInfo> {
 		Ok(DiskSpaceInfo {
 			byte_count: 1024 * 1024 * 1024,
@@ -1188,66 +1206,70 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 	}
 
 	fn get_volume_information(
-		&'h self,
-		_info: &OperationInfo<'c, 'h, Self>,
+		&self,
+		_info: &OperationInfo<'_, Self>,
 	) -> OperationResult<VolumeInfo> {
 		Ok(VolumeInfo {
 			name: U16CString::from_str("dokan-rust memfs").unwrap(),
 			serial_number: 0,
 			max_component_length: path::MAX_COMPONENT_LENGTH,
-			fs_flags: winnt::FILE_CASE_PRESERVED_NAMES
-				| winnt::FILE_CASE_SENSITIVE_SEARCH
-				| winnt::FILE_UNICODE_ON_DISK
-				| winnt::FILE_PERSISTENT_ACLS
-				| winnt::FILE_NAMED_STREAMS,
+			features: dokan::VolumeFeatures::CASE_PRESERVED_NAMES
+				| dokan::VolumeFeatures::CASE_SENSITIVE_SEARCH
+				| dokan::VolumeFeatures::UNICODE_ON_DISK
+				| dokan::VolumeFeatures::PERSISTENT_ACLS
+				| dokan::VolumeFeatures::NAMED_STREAMS,
 			// Custom names don't play well with UAC.
 			fs_name: U16CString::from_str("NTFS").unwrap(),
 		})
 	}
 
 	fn mounted(
-		&'h self,
+		&self,
 		_mount_point: &U16CStr,
-		_info: &OperationInfo<'c, 'h, Self>,
+		_info: &OperationInfo<'_, Self>,
 	) -> OperationResult<()> {
 		Ok(())
 	}
 
-	fn unmounted(&'h self, _info: &OperationInfo<'c, 'h, Self>) -> OperationResult<()> {
+	fn unmounted(&self, _info: &OperationInfo<'_, Self>) -> OperationResult<()> {
 		Ok(())
 	}
 
 	fn get_file_security(
-		&'h self,
+		&self,
 		_file_name: &U16CStr,
-		security_information: u32,
-		security_descriptor: winnt::PSECURITY_DESCRIPTOR,
-		buffer_length: u32,
-		_info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
-	) -> OperationResult<u32> {
+		security_information: SecurityInformation,
+		security_descriptor: &mut [u8],
+		_info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
+	) -> OperationResult<usize> {
 		context
 			.entry
 			.stat()
 			.read()
 			.unwrap()
 			.sec_desc
-			.get_security_info(security_information, security_descriptor, buffer_length)
+			.get_security_info(
+				security_information.bits(),
+				security_descriptor.as_mut_ptr().cast(),
+				security_descriptor.len() as u32,
+			)
+			.map(|length| length as usize)
 	}
 
 	fn set_file_security(
-		&'h self,
+		&self,
 		_file_name: &U16CStr,
-		security_information: u32,
-		security_descriptor: winnt::PSECURITY_DESCRIPTOR,
-		_buffer_length: u32,
-		_info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		security_information: SecurityInformation,
+		security_descriptor: &[u8],
+		_info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		let mut stat = context.entry.stat().write().unwrap();
-		let ret = stat
-			.sec_desc
-			.set_security_info(security_information, security_descriptor);
+		let ret = stat.sec_desc.set_security_info(
+			security_information.bits(),
+			security_descriptor.as_ptr() as winnt::PSECURITY_DESCRIPTOR,
+		);
 		if ret.is_ok() {
 			context.update_atime(&mut stat, SystemTime::now());
 		}
@@ -1255,11 +1277,11 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 	}
 
 	fn find_streams(
-		&'h self,
+		&self,
 		_file_name: &U16CStr,
 		mut fill_find_stream_data: impl FnMut(&FindStreamData) -> FillDataResult,
-		_info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		_info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		if let Entry::File(file) = &context.entry {
 			fill_find_stream_data(&FindStreamData {
@@ -1337,7 +1359,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 	init();
 
-	let mut mounter = FileSystemMounter::new(&handler, &mount_point, &options);
+	let mounter = FileSystemMounter::new(handler, &mount_point, options);
 
 	println!("File system will mount...");
 

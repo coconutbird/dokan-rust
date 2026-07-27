@@ -1,6 +1,6 @@
 use std::{mem, pin::Pin, ptr};
 
-use dokan::{map_win32_error_to_ntstatus, win32_ensure, OperationResult};
+use dokan::{OperationResult, map_win32_error_to_ntstatus, win32_ensure};
 use winapi::{
 	shared::{minwindef, ntdef, ntstatus::*, winerror},
 	um::{errhandlingapi::GetLastError, heapapi, securitybaseapi, winnt},

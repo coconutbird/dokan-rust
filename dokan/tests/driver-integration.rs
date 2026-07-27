@@ -37,7 +37,7 @@ use winapi::{
 		handleapi::{CloseHandle, INVALID_HANDLE_VALUE},
 		ioapiset::GetOverlappedResult,
 		minwinbase::OVERLAPPED,
-		processthreadsapi::{GetCurrentProcess, OpenProcessToken},
+		processthreadsapi::{GetCurrentProcess, OpenProcessToken, ProcessIdToSessionId},
 		securitybaseapi::*,
 		synchapi::CreateEventW,
 		winbase::*,
@@ -45,19 +45,33 @@ use winapi::{
 	},
 };
 
-use crate::{
-	data::{
-		CreateFileInfo, DiskSpaceInfo, FileInfo, FileTimeOperation, FillDataResult, FindData,
-		FindStreamData, OperationInfo, VolumeInfo,
-	},
-	file_system_handler::OperationResult,
-	init, notify_create, notify_delete, notify_rename, notify_update, notify_xattr_update,
-	operations_helpers::NtResult,
-	shutdown,
-	to_file_time::ToFileTime,
-	unmount, FileSystemHandle, FileSystemHandler, FileSystemMounter, MountFlags, MountOptions,
-	IO_SECURITY_CONTEXT,
+use dokan::{
+	CreateFileInfo, DeviceType, DiskSpaceInfo, FileInfo, FileSystemHandle, FileSystemHandler,
+	FileSystemMountError, FileSystemMounter, FileTimeOperation, FillDataResult, FindData,
+	FindStreamData, MountFlags, MountOptions, OperationInfo, OperationResult, SecurityInformation,
+	VolumeInfo, init, list_mount_points, notify_create, notify_delete, notify_rename,
+	notify_update, notify_xattr_update, shutdown, unmount,
 };
+
+trait TestFileTimeExt {
+	fn to_filetime(&self) -> winapi::shared::minwindef::FILETIME;
+}
+
+impl TestFileTimeExt for std::time::SystemTime {
+	fn to_filetime(&self) -> winapi::shared::minwindef::FILETIME {
+		const WINDOWS_EPOCH_OFFSET: Duration = Duration::from_secs(11_644_473_600);
+		let intervals =
+			self.duration_since(UNIX_EPOCH - WINDOWS_EPOCH_OFFSET)
+				.unwrap_or_default()
+				.as_nanos() / 100;
+		winapi::shared::minwindef::FILETIME {
+			dwLowDateTime: intervals as u32,
+			dwHighDateTime: (intervals >> 32) as u32,
+		}
+	}
+}
+
+type NtResult = OperationResult<()>;
 
 pub fn convert_str(s: impl AsRef<str>) -> U16CString {
 	unsafe { U16CString::from_str_unchecked(s) }
@@ -259,20 +273,20 @@ fn create_test_descriptor() -> Vec<u8> {
 	}
 }
 
-impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
+impl FileSystemHandler for TestHandler {
 	type Context = Option<TestContext>;
 
 	fn create_file(
-		&'b self,
-		file_name: &U16CStr,
-		_security_context: &IO_SECURITY_CONTEXT,
-		desired_access: u32,
-		file_attributes: u32,
-		share_access: u32,
-		create_disposition: u32,
-		create_options: u32,
-		info: &mut OperationInfo<'a, 'b, Self>,
+		&self,
+		request: &dokan::CreateFileRequest<'_, Self>,
 	) -> Result<CreateFileInfo<Self::Context>, NTSTATUS> {
+		let file_name = request.path;
+		let desired_access = request.desired_access.bits();
+		let file_attributes = request.file_attributes.bits();
+		let share_access = request.share_access.bits();
+		let create_disposition = request.disposition as u32;
+		let create_options = request.options.bits();
+		let info = request.operation;
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
 			"\\test_file_io"
@@ -377,10 +391,10 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn cleanup(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
-		_info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		_info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) {
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_close_file" {
@@ -389,10 +403,10 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn close_file(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
-		_info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		_info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) {
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_close_file" {
@@ -401,12 +415,12 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn read_file(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
 		offset: i64,
 		buffer: &mut [u8],
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<u32> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -424,12 +438,12 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn write_file(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
 		offset: i64,
 		buffer: &[u8],
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<u32> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -444,10 +458,10 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn flush_file_buffers(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -460,18 +474,18 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn get_file_information(
-		&'b self,
+		&self,
 		_file_name: &U16CStr,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<FileInfo> {
 		check_pid(info.pid())?;
 		Ok(FileInfo {
-			attributes: if info.is_dir() {
+			attributes: dokan::FileAttributes::from_bits_retain(if info.is_dir() {
 				FILE_ATTRIBUTE_DIRECTORY
 			} else {
 				FILE_ATTRIBUTE_NORMAL
-			},
+			}),
 			creation_time: UNIX_EPOCH,
 			last_access_time: UNIX_EPOCH + Duration::from_secs(1),
 			last_write_time: UNIX_EPOCH + Duration::from_secs(2),
@@ -482,17 +496,17 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn find_files(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
 		mut fill_find_data: impl FnMut(&FindData) -> FillDataResult,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
 			"\\test_find_files" => fill_find_data(&FindData {
-				attributes: FILE_ATTRIBUTE_NORMAL,
+				attributes: dokan::FileAttributes::NORMAL,
 				creation_time: UNIX_EPOCH,
 				last_access_time: UNIX_EPOCH + Duration::from_secs(1),
 				last_write_time: UNIX_EPOCH + Duration::from_secs(2),
@@ -505,19 +519,19 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn find_files_with_pattern(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
 		pattern: &U16CStr,
 		mut fill_find_data: impl FnMut(&FindData) -> FillDataResult,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
 			"\\test_find_files" => Err(STATUS_NOT_IMPLEMENTED),
 			"\\test_find_files_with_pattern" => fill_find_data(&FindData {
-				attributes: FILE_ATTRIBUTE_NORMAL,
+				attributes: dokan::FileAttributes::NORMAL,
 				creation_time: UNIX_EPOCH,
 				last_access_time: UNIX_EPOCH + Duration::from_secs(1),
 				last_write_time: UNIX_EPOCH + Duration::from_secs(2),
@@ -535,18 +549,18 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn set_file_attributes(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
-		file_attributes: u32,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		file_attributes: dokan::FileAttributes,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
 			"\\test_set_file_attributes" => {
 				self.tx
-					.send(HandlerSignal::SetFileAttributes(file_attributes))
+					.send(HandlerSignal::SetFileAttributes(file_attributes.bits()))
 					.unwrap();
 				Ok(())
 			}
@@ -556,13 +570,13 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn set_file_time(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
 		creation_time: FileTimeOperation,
 		last_access_time: FileTimeOperation,
 		last_write_time: FileTimeOperation,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -583,10 +597,10 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn delete_file(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -601,10 +615,10 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn delete_directory(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -619,12 +633,12 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn move_file(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
 		new_file_name: &U16CStr,
 		replace_if_existing: bool,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -642,11 +656,11 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn set_end_of_file(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
 		offset: i64,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -661,11 +675,11 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn set_allocation_size(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
 		alloc_size: i64,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -680,12 +694,12 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn lock_file(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
 		offset: i64,
 		length: i64,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -700,12 +714,12 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn unlock_file(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
 		offset: i64,
 		length: i64,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -720,8 +734,8 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn get_disk_free_space(
-		&'b self,
-		_info: &OperationInfo<'a, 'b, Self>,
+		&self,
+		_info: &OperationInfo<'_, Self>,
 	) -> OperationResult<DiskSpaceInfo> {
 		Ok(DiskSpaceInfo {
 			byte_count: 2 * 1024 * 1024,
@@ -731,86 +745,82 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn get_volume_information(
-		&'b self,
-		_info: &OperationInfo<'a, 'b, Self>,
+		&self,
+		_info: &OperationInfo<'_, Self>,
 	) -> OperationResult<VolumeInfo> {
 		Ok(VolumeInfo {
 			name: convert_str("Test Drive"),
 			serial_number: 1,
 			max_component_length: 255,
-			fs_flags: FILE_CASE_PRESERVED_NAMES
-				| FILE_CASE_SENSITIVE_SEARCH
-				| FILE_UNICODE_ON_DISK
-				| FILE_NAMED_STREAMS,
+			features: dokan::VolumeFeatures::CASE_PRESERVED_NAMES
+				| dokan::VolumeFeatures::CASE_SENSITIVE_SEARCH
+				| dokan::VolumeFeatures::UNICODE_ON_DISK
+				| dokan::VolumeFeatures::NAMED_STREAMS,
 			fs_name: convert_str("TESTFS"),
 		})
 	}
 
 	fn mounted(
-		&'b self,
+		&self,
 		_mount_point: &U16CStr,
-		_info: &OperationInfo<'a, 'b, Self>,
+		_info: &OperationInfo<'_, Self>,
 	) -> OperationResult<()> {
 		self.tx.send(HandlerSignal::Mounted).unwrap();
 		Ok(())
 	}
 
-	fn unmounted(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> OperationResult<()> {
+	fn unmounted(&self, _info: &OperationInfo<'_, Self>) -> OperationResult<()> {
 		self.tx.send(HandlerSignal::Unmounted).unwrap();
 		Ok(())
 	}
 
 	fn get_file_security(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
-		security_information: SECURITY_INFORMATION,
-		security_descriptor: PSECURITY_DESCRIPTOR,
-		buffer_length: u32,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
-	) -> OperationResult<u32> {
+		security_information: SecurityInformation,
+		security_descriptor: &mut [u8],
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
+	) -> OperationResult<usize> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
 			"\\test_get_file_security" => {
 				self.tx
 					.send(HandlerSignal::GetFileSecurity(
-						security_information,
-						buffer_length,
+						security_information.bits(),
+						security_descriptor.len() as u32,
 					))
 					.unwrap();
 				let desc = create_test_descriptor();
-				let result = Ok(desc.len() as u32);
-				if desc.len() <= buffer_length as usize {
-					unsafe {
-						desc.as_ptr()
-							.copy_to_nonoverlapping(security_descriptor as *mut _, desc.len());
-					}
+				let result = Ok(desc.len());
+				if desc.len() <= security_descriptor.len() {
+					security_descriptor[..desc.len()].copy_from_slice(&desc);
 				}
 				result
 			}
-			"\\test_get_file_security_overflow" => Ok(buffer_length + 1),
+			"\\test_get_file_security_overflow" => Ok(security_descriptor.len() + 1),
 			_ => Err(STATUS_ACCESS_DENIED),
 		}
 	}
 
 	fn set_file_security(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
-		security_information: SECURITY_INFORMATION,
-		security_descriptor: PSECURITY_DESCRIPTOR,
-		buffer_length: u32,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		security_information: SecurityInformation,
+		security_descriptor: &[u8],
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_set_file_security" {
-			let (sid, owner_defaulted) = get_descriptor_owner(security_descriptor);
+			let (sid, owner_defaulted) =
+				get_descriptor_owner(security_descriptor.as_ptr() as PSECURITY_DESCRIPTOR);
 			self.tx
 				.send(HandlerSignal::SetFileSecurity(
-					buffer_length,
-					security_information,
+					security_descriptor.len() as u32,
+					security_information.bits(),
 					sid,
 					owner_defaulted,
 				))
@@ -822,11 +832,11 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn find_streams(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
 		mut fill_find_stream_data: impl FnMut(&FindStreamData) -> FillDataResult,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -859,10 +869,10 @@ impl TestDriveContext<'_> {
 	}
 
 	pub fn instance(&self) -> FileSystemHandle {
-		*self
-			.instance
+		self.instance
 			.borrow_mut()
 			.get_or_insert_with(|| self.rx_instance.recv().unwrap())
+			.clone()
 	}
 }
 
@@ -904,7 +914,7 @@ pub fn with_test_drive<Scope: FnOnce(TestDriveContext)>(scope: Scope) {
 			sector_size: 1024,
 			..Default::default()
 		};
-		let mut file_system = FileSystemMounter::new(&handler, &mount_point, &options);
+		let file_system = FileSystemMounter::new(handler, &mount_point, options);
 		let mount_handle = file_system.mount().unwrap();
 		tx_instance.send(mount_handle.instance()).unwrap();
 		drop(mount_handle);
@@ -1239,9 +1249,9 @@ fn can_set_file_time() {
 				FileTimeOperation::SetTime(mtime),
 			)
 		);
-		let time_dont_change = mem::transmute(0i64);
-		let time_disable_update = mem::transmute(-1i64);
-		let time_resume_update = mem::transmute(-2i64);
+		let time_dont_change = mem::transmute::<i64, winapi::shared::minwindef::FILETIME>(0);
+		let time_disable_update = mem::transmute::<i64, winapi::shared::minwindef::FILETIME>(-1);
+		let time_resume_update = mem::transmute::<i64, winapi::shared::minwindef::FILETIME>(-2);
 		assert_eq_win32!(
 			SetFileTime(
 				hf,
@@ -1432,7 +1442,7 @@ fn can_find_streams() {
 			0,
 		);
 		assert_ne_win32!(hf, INVALID_HANDLE_VALUE);
-		assert_eq!(data.StreamSize.QuadPart(), &42);
+		assert_eq!(data.StreamSize, 42);
 		assert_eq!(
 			U16CStr::from_slice_truncate(&data.cStreamName).unwrap(),
 			convert_str("::$DATA")
@@ -1705,4 +1715,43 @@ fn can_notify() {
 		);
 		handle.join().unwrap();
 	})
+}
+
+#[test]
+fn can_list_mount_points_for_mounted_filesystem() {
+	with_test_drive(|_| unsafe {
+		let mount_points = list_mount_points(false).unwrap();
+		let list: Vec<_> = mount_points.into_iter().collect();
+		assert_eq!(list.len(), 1);
+
+		let info = &list[0];
+		assert_eq!(info.device_type, DeviceType::Disk);
+		assert_eq!(
+			info.mount_point,
+			Some(convert_str("\\DosDevices\\Z:").as_ref())
+		);
+		assert_eq!(info.unc_name, None);
+		assert!(
+			regex::Regex::new(r"^\\Device\\Volume\{[0-9a-z]{8}-([0-9a-z]{4}-){3}[0-9a-z]{12}\}$")
+				.unwrap()
+				.is_match(&info.device_name.to_string_lossy())
+		);
+
+		let mut session_id = 0;
+		assert_eq!(ProcessIdToSessionId(process::id(), &mut session_id), TRUE);
+		assert_eq!(info.session_id, session_id);
+	});
+}
+
+#[test]
+fn invalid_mount_point_fails() {
+	let (tx, _rx) = mpsc::sync_channel(1);
+	let result = FileSystemMounter::new(
+		TestHandler::new(tx),
+		convert_str("0"),
+		MountOptions::default(),
+	)
+	.mount();
+
+	assert!(matches!(result, Err(FileSystemMountError::Mount)));
 }
