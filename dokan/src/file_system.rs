@@ -130,13 +130,13 @@ pub struct MountOptions {
 impl Default for MountOptions {
 	fn default() -> Self {
 		Self {
-			single_thread: Default::default(),
+			single_thread: false,
 			flags: MountFlags::empty(),
-			unc_name: Default::default(),
-			timeout: Default::default(),
-			allocation_unit_size: Default::default(),
-			sector_size: Default::default(),
-			volume_security_descriptor: Default::default(),
+			unc_name: None,
+			timeout: Duration::ZERO,
+			allocation_unit_size: 0,
+			sector_size: 0,
+			volume_security_descriptor: None,
 		}
 	}
 }
@@ -199,7 +199,7 @@ impl Display for FileSystemMountError {
 			FileSystemMountError::MountPoint => "the mount point is invalid",
 			FileSystemMountError::Version => "requested an incompatible version",
 		};
-		write!(f, "{}", msg)
+		write!(f, "{msg}")
 	}
 }
 
@@ -229,6 +229,11 @@ impl<FSH: FileSystemHandler> FileSystemMounter<FSH> {
 	/// * `handler` - Implements [`FileSystemHandler`].
 	/// * `mount_point`- Can be a driver letter like `"M"` or a folder path `"C:\mount\dokan"` on a NTFS partition.
 	/// * `options` - Customizes behavior.
+	///
+	/// # Panics
+	///
+	/// Panics if the volume security descriptor is larger than
+	/// [`VOLUME_SECURITY_DESCRIPTOR_MAX_SIZE`].
 	pub fn new(handler: FSH, mount_point: impl AsRef<U16CStr>, options: MountOptions) -> Self {
 		let handler = Arc::new(handler);
 		let mount_point = mount_point.as_ref().to_owned();
@@ -244,11 +249,12 @@ impl<FSH: FileSystemHandler> FileSystemMounter<FSH> {
 		);
 		if let Some(descriptor) = options.volume_security_descriptor {
 			for (destination, source) in volume_security_descriptor.iter_mut().zip(descriptor) {
-				*destination = source as i8;
+				*destination = i8::from_ne_bytes([source]);
 			}
 		}
 		let raw_options = DOKAN_OPTIONS {
-			Version: WRAPPER_VERSION as u16,
+			Version: u16::try_from(WRAPPER_VERSION)
+				.expect("the bundled Dokany version must fit in DOKAN_OPTIONS::Version"),
 			SingleThread: options.single_thread.into(),
 			Options: options.flags.bits(),
 			GlobalContext: Arc::as_ptr(&handler) as u64,
@@ -257,7 +263,8 @@ impl<FSH: FileSystemHandler> FileSystemMounter<FSH> {
 			Timeout: duration_millis(options.timeout),
 			AllocationUnitSize: options.allocation_unit_size,
 			SectorSize: options.sector_size,
-			VolumeSecurityDescriptorLength: volume_security_descriptor_length as u32,
+			VolumeSecurityDescriptorLength: u32::try_from(volume_security_descriptor_length)
+				.expect("Dokany's maximum security descriptor size fits in u32"),
 			VolumeSecurityDescriptor: volume_security_descriptor,
 		};
 		let operations = DOKAN_OPERATIONS {
@@ -300,14 +307,19 @@ impl<FSH: FileSystemHandler> FileSystemMounter<FSH> {
 	}
 
 	/// Mounts the filesystem without blocking the calling thread.
+	///
+	/// # Errors
+	///
+	/// Returns a [`FileSystemMountError`] when Dokany cannot create or mount the
+	/// configured filesystem.
 	pub fn mount(mut self) -> Result<FileSystem, FileSystemMountError> {
 		let mut instance = ptr::null_mut();
 
 		let result = unsafe {
 			DokanCreateFileSystem(
-				&mut self.state.options,
-				&mut self.state.operations,
-				&mut instance,
+				&raw mut self.state.options,
+				&raw mut self.state.operations,
+				&raw mut instance,
 			)
 		};
 
@@ -325,7 +337,7 @@ impl<FSH: FileSystemHandler> FileSystemMounter<FSH> {
 }
 
 fn duration_millis(duration: Duration) -> u32 {
-	duration.as_millis().min(u128::from(u32::MAX)) as u32
+	u32::try_from(duration.as_millis()).unwrap_or(u32::MAX)
 }
 
 unsafe impl<FSH: FileSystemHandler> Send for MountState<FSH> {}
@@ -339,6 +351,8 @@ pub struct FileSystem {
 }
 
 impl FileSystem {
+	/// Returns a cloneable handle used by notification functions.
+	#[must_use]
 	pub fn instance(&self) -> FileSystemHandle {
 		FileSystemHandle(Arc::clone(&self.instance))
 	}
@@ -401,5 +415,40 @@ impl FileSystemHandle {
 	pub(crate) fn with_raw(&self, f: impl FnOnce(DOKAN_HANDLE) -> bool) -> bool {
 		let raw = self.0.raw.read().expect("filesystem handle lock poisoned");
 		raw.is_some_and(|raw| f(raw as DOKAN_HANDLE))
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn timeout_conversion_saturates_at_the_native_limit() {
+		assert_eq!(duration_millis(Duration::ZERO), 0);
+		assert_eq!(duration_millis(Duration::from_millis(42)), 42);
+		assert_eq!(
+			duration_millis(Duration::from_millis(u64::from(u32::MAX) + 1)),
+			u32::MAX
+		);
+	}
+
+	#[test]
+	fn mount_errors_have_stable_native_mappings() {
+		assert_eq!(
+			FileSystemMountError::from(DOKAN_DRIVE_LETTER_ERROR),
+			FileSystemMountError::DriveLetter
+		);
+		assert_eq!(
+			FileSystemMountError::from(DOKAN_VERSION_ERROR),
+			FileSystemMountError::Version
+		);
+		assert_eq!(
+			FileSystemMountError::from(i32::MAX),
+			FileSystemMountError::General
+		);
+		assert_eq!(
+			FileSystemMountError::MountPoint.to_string(),
+			"the mount point is invalid"
+		);
 	}
 }

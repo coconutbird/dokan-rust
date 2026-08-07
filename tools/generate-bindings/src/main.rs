@@ -1,3 +1,5 @@
+//! Regenerates the checked-in Rust FFI bindings from the vendored Dokany headers.
+
 use std::{
 	env,
 	path::{Path, PathBuf},

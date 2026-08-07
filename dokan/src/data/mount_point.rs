@@ -1,15 +1,18 @@
 use std::{iter::Map, slice};
 
 use dokan_sys::{
+	DOKAN_MOUNT_POINT_INFO, DokanGetMountPointList, DokanReleaseMountPointList,
+	PDOKAN_MOUNT_POINT_INFO,
 	win32::{FILE_DEVICE_DISK_FILE_SYSTEM, FILE_DEVICE_NETWORK_FILE_SYSTEM},
-	*,
 };
 use widestring::U16CStr;
 
 /// Mount point device type.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeviceType {
+	/// A local disk filesystem.
 	Disk,
+	/// A network filesystem.
 	Network,
 	/// A device type introduced by a newer or nonstandard Dokany build.
 	Unknown(u32),
@@ -76,6 +79,15 @@ pub struct MountPointList {
 	len: usize,
 }
 
+impl MountPointList {
+	/// Iterates over the mount-point information owned by this list.
+	pub fn iter(&self) -> impl ExactSizeIterator<Item = MountPointInfo<'_>> {
+		unsafe { slice::from_raw_parts(self.list_ptr, self.len) }
+			.iter()
+			.map(Into::into)
+	}
+}
+
 impl<'a> IntoIterator for &'a MountPointList {
 	type Item = MountPointInfo<'a>;
 
@@ -102,10 +114,11 @@ impl Drop for MountPointList {
 /// Lists of active Dokan mount points.
 ///
 /// Returns `None` in case of error.
+#[must_use]
 pub fn list_mount_points(unc_only: bool) -> Option<MountPointList> {
 	unsafe {
 		let mut len: u32 = 0;
-		let list_ptr = DokanGetMountPointList(unc_only.into(), &mut len);
+		let list_ptr = DokanGetMountPointList(unc_only.into(), &raw mut len);
 		if list_ptr.is_null() {
 			None
 		} else {

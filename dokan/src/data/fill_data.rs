@@ -34,7 +34,7 @@ impl Display for FillDataError {
 			FillDataError::NameTooLong => "file name length exceeds the limit of MAX_PATH",
 			FillDataError::BufferFull => "buffer is full",
 		};
-		write!(f, "{}", msg)
+		write!(f, "{msg}")
 	}
 }
 

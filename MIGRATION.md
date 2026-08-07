@@ -1,7 +1,7 @@
-# Rust 2024 API migration
+# Migrating to 0.4
 
-This branch intentionally breaks the pre-2024 wrapper API to remove unsound
-lifetime and ownership assumptions.
+Version 0.4 adopts Rust 2024 and intentionally breaks the 0.3 wrapper API to
+remove unsound lifetime and ownership assumptions.
 
 ## Handler and handle state
 
@@ -28,7 +28,8 @@ storage and automatically holds a process-wide Dokany runtime reference.
 
 `FileSystemHandle` is cloneable but no longer `Copy`. It shares the full native
 session lifetime and serializes notification calls against native handle
-closure. Calls made after unmount return `false`.
+closure. Notification functions borrow `&FileSystemHandle`; calls made after
+unmount return `false`.
 
 ## Raw bindings
 

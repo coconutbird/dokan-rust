@@ -5,41 +5,81 @@
 
 use crate::NtStatus;
 
+const fn from_u32_bits(value: u32) -> NtStatus {
+	NtStatus::from_raw(i32::from_ne_bytes(value.to_ne_bytes()))
+}
+
+/// The operation completed successfully.
 pub const SUCCESS: NtStatus = NtStatus::from_raw(0x0000_0000);
-pub const BUFFER_OVERFLOW: NtStatus = NtStatus::from_raw(0x8000_0005_u32 as i32);
-pub const ACCESS_DENIED: NtStatus = NtStatus::from_raw(0xC000_0022_u32 as i32);
-pub const INVALID_HANDLE: NtStatus = NtStatus::from_raw(0xC000_0008_u32 as i32);
-pub const INVALID_PARAMETER: NtStatus = NtStatus::from_raw(0xC000_000D_u32 as i32);
-pub const NOT_IMPLEMENTED: NtStatus = NtStatus::from_raw(0xC000_0002_u32 as i32);
-pub const INVALID_DEVICE_REQUEST: NtStatus = NtStatus::from_raw(0xC000_0010_u32 as i32);
-pub const OBJECT_NAME_INVALID: NtStatus = NtStatus::from_raw(0xC000_0033_u32 as i32);
-pub const OBJECT_NAME_NOT_FOUND: NtStatus = NtStatus::from_raw(0xC000_0034_u32 as i32);
-pub const OBJECT_NAME_COLLISION: NtStatus = NtStatus::from_raw(0xC000_0035_u32 as i32);
-pub const OBJECT_PATH_NOT_FOUND: NtStatus = NtStatus::from_raw(0xC000_003A_u32 as i32);
-pub const SHARING_VIOLATION: NtStatus = NtStatus::from_raw(0xC000_0043_u32 as i32);
-pub const DELETE_PENDING: NtStatus = NtStatus::from_raw(0xC000_0056_u32 as i32);
-pub const CANNOT_DELETE: NtStatus = NtStatus::from_raw(0xC000_0121_u32 as i32);
-pub const FILE_IS_A_DIRECTORY: NtStatus = NtStatus::from_raw(0xC000_00BA_u32 as i32);
-pub const NOT_A_DIRECTORY: NtStatus = NtStatus::from_raw(0xC000_0103_u32 as i32);
-pub const DIRECTORY_NOT_EMPTY: NtStatus = NtStatus::from_raw(0xC000_0101_u32 as i32);
-pub const INTERNAL_ERROR: NtStatus = NtStatus::from_raw(0xC000_00E5_u32 as i32);
+/// The output buffer was too small to contain all available data.
+pub const BUFFER_OVERFLOW: NtStatus = from_u32_bits(0x8000_0005);
+/// The caller does not have permission to perform the operation.
+pub const ACCESS_DENIED: NtStatus = from_u32_bits(0xC000_0022);
+/// The supplied handle is invalid.
+pub const INVALID_HANDLE: NtStatus = from_u32_bits(0xC000_0008);
+/// One or more operation parameters are invalid.
+pub const INVALID_PARAMETER: NtStatus = from_u32_bits(0xC000_000D);
+/// The requested operation is not implemented.
+pub const NOT_IMPLEMENTED: NtStatus = from_u32_bits(0xC000_0002);
+/// The request is not valid for this device.
+pub const INVALID_DEVICE_REQUEST: NtStatus = from_u32_bits(0xC000_0010);
+/// The supplied object name is invalid.
+pub const OBJECT_NAME_INVALID: NtStatus = from_u32_bits(0xC000_0033);
+/// The requested object name does not exist.
+pub const OBJECT_NAME_NOT_FOUND: NtStatus = from_u32_bits(0xC000_0034);
+/// The requested object name already exists.
+pub const OBJECT_NAME_COLLISION: NtStatus = from_u32_bits(0xC000_0035);
+/// A component of the requested path does not exist.
+pub const OBJECT_PATH_NOT_FOUND: NtStatus = from_u32_bits(0xC000_003A);
+/// Existing sharing modes prevent the requested access.
+pub const SHARING_VIOLATION: NtStatus = from_u32_bits(0xC000_0043);
+/// The object is already pending deletion.
+pub const DELETE_PENDING: NtStatus = from_u32_bits(0xC000_0056);
+/// The object cannot be deleted.
+pub const CANNOT_DELETE: NtStatus = from_u32_bits(0xC000_0121);
+/// A file operation targeted a directory.
+pub const FILE_IS_A_DIRECTORY: NtStatus = from_u32_bits(0xC000_00BA);
+/// A directory operation targeted a non-directory.
+pub const NOT_A_DIRECTORY: NtStatus = from_u32_bits(0xC000_0103);
+/// The directory cannot be removed because it contains entries.
+pub const DIRECTORY_NOT_EMPTY: NtStatus = from_u32_bits(0xC000_0101);
+/// An unexpected internal error occurred.
+pub const INTERNAL_ERROR: NtStatus = from_u32_bits(0xC000_00E5);
 
 // Windows-compatible spellings ease migration without exposing a binding crate.
+/// Windows-compatible alias for [`SUCCESS`].
 pub const STATUS_SUCCESS: NtStatus = SUCCESS;
+/// Windows-compatible alias for [`BUFFER_OVERFLOW`].
 pub const STATUS_BUFFER_OVERFLOW: NtStatus = BUFFER_OVERFLOW;
+/// Windows-compatible alias for [`ACCESS_DENIED`].
 pub const STATUS_ACCESS_DENIED: NtStatus = ACCESS_DENIED;
+/// Windows-compatible alias for [`INVALID_HANDLE`].
 pub const STATUS_INVALID_HANDLE: NtStatus = INVALID_HANDLE;
+/// Windows-compatible alias for [`INVALID_PARAMETER`].
 pub const STATUS_INVALID_PARAMETER: NtStatus = INVALID_PARAMETER;
+/// Windows-compatible alias for [`NOT_IMPLEMENTED`].
 pub const STATUS_NOT_IMPLEMENTED: NtStatus = NOT_IMPLEMENTED;
+/// Windows-compatible alias for [`INVALID_DEVICE_REQUEST`].
 pub const STATUS_INVALID_DEVICE_REQUEST: NtStatus = INVALID_DEVICE_REQUEST;
+/// Windows-compatible alias for [`OBJECT_NAME_INVALID`].
 pub const STATUS_OBJECT_NAME_INVALID: NtStatus = OBJECT_NAME_INVALID;
+/// Windows-compatible alias for [`OBJECT_NAME_NOT_FOUND`].
 pub const STATUS_OBJECT_NAME_NOT_FOUND: NtStatus = OBJECT_NAME_NOT_FOUND;
+/// Windows-compatible alias for [`OBJECT_NAME_COLLISION`].
 pub const STATUS_OBJECT_NAME_COLLISION: NtStatus = OBJECT_NAME_COLLISION;
+/// Windows-compatible alias for [`OBJECT_PATH_NOT_FOUND`].
 pub const STATUS_OBJECT_PATH_NOT_FOUND: NtStatus = OBJECT_PATH_NOT_FOUND;
+/// Windows-compatible alias for [`SHARING_VIOLATION`].
 pub const STATUS_SHARING_VIOLATION: NtStatus = SHARING_VIOLATION;
+/// Windows-compatible alias for [`DELETE_PENDING`].
 pub const STATUS_DELETE_PENDING: NtStatus = DELETE_PENDING;
+/// Windows-compatible alias for [`CANNOT_DELETE`].
 pub const STATUS_CANNOT_DELETE: NtStatus = CANNOT_DELETE;
+/// Windows-compatible alias for [`FILE_IS_A_DIRECTORY`].
 pub const STATUS_FILE_IS_A_DIRECTORY: NtStatus = FILE_IS_A_DIRECTORY;
+/// Windows-compatible alias for [`NOT_A_DIRECTORY`].
 pub const STATUS_NOT_A_DIRECTORY: NtStatus = NOT_A_DIRECTORY;
+/// Windows-compatible alias for [`DIRECTORY_NOT_EMPTY`].
 pub const STATUS_DIRECTORY_NOT_EMPTY: NtStatus = DIRECTORY_NOT_EMPTY;
+/// Windows-compatible alias for [`INTERNAL_ERROR`].
 pub const STATUS_INTERNAL_ERROR: NtStatus = INTERNAL_ERROR;

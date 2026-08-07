@@ -107,7 +107,12 @@ pub extern "system" fn read_file<FSH: FileSystemHandler>(
 		*read_length = 0;
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<FSH>::new(dokan_file_info);
-		let buffer = slice::from_raw_parts_mut(buffer as *mut _, buffer_length as usize);
+		let buffer: &mut [u8] = if buffer_length == 0 {
+			&mut []
+		} else {
+			let buffer = NonNull::new(buffer.cast::<u8>()).ok_or(STATUS_INVALID_PARAMETER)?;
+			slice::from_raw_parts_mut(buffer.as_ptr(), buffer_length as usize)
+		};
 		info.handler()
 			.read_file(file_name, offset, buffer, &info, info.context()?)
 			.and_then(|bytes_read| {
@@ -133,7 +138,13 @@ pub extern "system" fn write_file<FSH: FileSystemHandler>(
 		*number_of_bytes_written = 0;
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<FSH>::new(dokan_file_info);
-		let buffer = slice::from_raw_parts(buffer as *mut _, number_of_bytes_to_write as usize);
+		let buffer: &[u8] = if number_of_bytes_to_write == 0 {
+			&[]
+		} else {
+			let buffer =
+				NonNull::new(buffer.cast_mut().cast::<u8>()).ok_or(STATUS_INVALID_PARAMETER)?;
+			slice::from_raw_parts(buffer.as_ptr(), number_of_bytes_to_write as usize)
+		};
 		info.handler()
 			.write_file(file_name, offset, buffer, &info, info.context()?)
 			.and_then(|bytes_written| {

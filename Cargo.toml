@@ -1,10 +1,10 @@
 [workspace]
-members = ["dokan-sys", "dokan", "tools/generate-bindings"]
+members = ["dokan-sys", "dokan", "fuzz", "tools/generate-bindings"]
 default-members = ["dokan-sys", "dokan"]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.1+dokan230"
+version = "0.4.0+dokan230"
 authors = ["DDoSolitary <DDoSolitary@gmail.com>"]
 edition = "2024"
 rust-version = "1.85"
@@ -15,11 +15,13 @@ license = "MIT"
 [workspace.dependencies]
 bindgen = "0.72"
 bitflags = "2.9"
+bolero = "0.13.4"
 cc = "1.2"
 clap = "4.5"
 ctrlc = "3.4"
-dokan-sys = { version = "0.3.1", path = "dokan-sys" }
-lazy_static = "1.5"
+dokan = { version = "0.4.0", path = "dokan" }
+dokan-sys = { version = "0.4.0", path = "dokan-sys" }
+libfuzzer-sys = "0.4"
 parking_lot = "0.12"
 regex = "1.11"
 widestring = "1.2"
@@ -27,7 +29,19 @@ winapi = "0.3"
 windows = { version = "0.62.2", default-features = false }
 
 [workspace.lints.rust]
-unsafe_op_in_unsafe_fn = "warn"
+missing_docs = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+unexpected_cfgs = { level = "deny", check-cfg = ["cfg(fuzzing)"] }
+warnings = { level = "deny", priority = -1 }
+
+[workspace.lints.clippy]
+pedantic = { level = "deny", priority = -1 }
 
 [profile.release]
 lto = true
+
+[profile.fuzz]
+inherits = "dev"
+opt-level = 3
+incremental = false
+codegen-units = 1

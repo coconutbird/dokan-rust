@@ -60,52 +60,62 @@ impl<FSH: FileSystemHandler> OperationInfo<'_, FSH> {
 	}
 
 	/// Gets process ID of the calling process.
+	#[must_use]
 	pub fn pid(&self) -> u32 {
 		self.file_info().ProcessId
 	}
 
 	/// Gets whether the target file is a directory.
+	#[must_use]
 	pub fn is_dir(&self) -> bool {
 		self.file_info().IsDirectory != 0
 	}
 
 	/// Gets whether the file should be deleted when it is closed.
+	#[must_use]
 	pub fn delete_pending(&self) -> bool {
 		self.file_info().DeletePending != 0
 	}
 
 	/// Gets whether it is a paging I/O operation.
+	#[must_use]
 	pub fn paging_io(&self) -> bool {
 		self.file_info().PagingIo != 0
 	}
 
 	/// Gets whether it is a synchronous I/O operation.
+	#[must_use]
 	pub fn synchronous_io(&self) -> bool {
 		self.file_info().SynchronousIo != 0
 	}
 
 	/// Gets whether it is a non-cached I/O operation.
+	#[must_use]
 	pub fn no_cache(&self) -> bool {
 		self.file_info().Nocache != 0
 	}
 
 	/// Gets whether the current write operation should write to end of file instead of the
 	/// position specified by the offset argument.
+	#[must_use]
 	pub fn write_to_eof(&self) -> bool {
 		self.file_info().WriteToEndOfFile != 0
 	}
 
 	/// Gets the number of threads used to handle file system operations.
+	#[must_use]
 	pub fn single_thread(&self) -> bool {
 		self.mount_options().SingleThread != 0
 	}
 
 	/// Gets flags that controls behavior of the mounted volume.
+	#[must_use]
 	pub fn mount_flags(&self) -> MountFlags {
 		MountFlags::from_bits_truncate(self.mount_options().Options)
 	}
 
 	/// Gets mount point path.
+	#[must_use]
 	pub fn mount_point(&self) -> Option<&U16CStr> {
 		let ptr = self.mount_options().MountPoint;
 		if ptr.is_null() {
@@ -116,6 +126,7 @@ impl<FSH: FileSystemHandler> OperationInfo<'_, FSH> {
 	}
 
 	/// Gets UNC name of the network drive.
+	#[must_use]
 	pub fn unc_name(&self) -> Option<&U16CStr> {
 		let ptr = self.mount_options().UNCName;
 		if ptr.is_null() {
@@ -130,16 +141,19 @@ impl<FSH: FileSystemHandler> OperationInfo<'_, FSH> {
 	/// See [`MountOptions::timeout`] for more information.
 	///
 	/// [`MountOptions::timeout`]: crate::MountOptions::timeout
+	#[must_use]
 	pub fn timeout(&self) -> Duration {
 		Duration::from_millis(self.mount_options().Timeout.into())
 	}
 
 	/// Gets allocation unit size of the volume.
+	#[must_use]
 	pub fn allocation_unit_size(&self) -> u32 {
 		self.mount_options().AllocationUnitSize
 	}
 
 	/// Gets sector size of the volume.
+	#[must_use]
 	pub fn sector_size(&self) -> u32 {
 		self.mount_options().SectorSize
 	}
@@ -149,13 +163,14 @@ impl<FSH: FileSystemHandler> OperationInfo<'_, FSH> {
 	/// Returns `true` on success.
 	#[must_use]
 	pub fn reset_timeout(&self, timeout: Duration) -> bool {
-		let millis = timeout.as_millis().min(u128::from(u32::MAX)) as u32;
+		let millis = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
 		unsafe { DokanResetTimeout(millis, self.file_info.as_ptr()) != 0 }
 	}
 
 	/// Gets the access token associated with the calling process.
 	///
 	/// Returns `None` on error.
+	#[must_use]
 	pub fn requester_token(&self) -> Option<OwnedHandle> {
 		unsafe {
 			let value = DokanOpenRequestorToken(self.file_info.as_ptr());

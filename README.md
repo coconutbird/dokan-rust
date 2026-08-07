@@ -44,6 +44,22 @@ Windows SDK; normal builds do not.
 
 Note that the versions of the `dokan-sys` crate, the linked import library and the Dokan library loaded at runtime should be identical, or you may run into troubles. So please take care when using the `DokanLibrary2_LibraryPath_*` environment variables and [deploying your application](https://github.com/dokan-dev/dokany/wiki/How-to-package-your-application-with-Dokan#dokan-application-considerations).
 
+# Quality gates
+
+The workspace enforces shared dependency declarations, warning-free Rust,
+missing public documentation, unsafe-operation checks, and Clippy's pedantic
+group. CI covers x86/x64 MSVC and GNU builds against both installed and bundled
+Dokany libraries, plus the Rust 1.85 MSRV.
+
+Run the portable unit, driver-integration, and property-fuzz suites with:
+
+```text
+cargo test --workspace --all-features --locked -- --test-threads=1
+```
+
+See [RELEASING.md](RELEASING.md) for all release gates and
+[fuzz/README.md](fuzz/README.md) for sustained fuzz campaigns.
+
 # Usage
 
 - `dokan-sys` can be used in exactly the same way as the native Dokan library. Read [Dokan's documentation](https://dokan-dev.github.io/dokany-doc/html/) for more information.

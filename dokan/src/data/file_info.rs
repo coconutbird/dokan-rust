@@ -2,7 +2,10 @@ use std::time::SystemTime;
 
 use dokan_sys::win32::BY_HANDLE_FILE_INFORMATION;
 
-use crate::{FileAttributes, to_file_time::ToFileTime};
+use crate::{
+	FileAttributes,
+	to_file_time::{ToFileTime, split_u64},
+};
 
 /// Information about a file returned by [`FileSystemHandler::get_file_information`].
 ///
@@ -37,17 +40,47 @@ pub struct FileInfo {
 
 impl FileInfo {
 	pub(crate) fn to_raw_struct(&self) -> BY_HANDLE_FILE_INFORMATION {
+		let (file_size_low, file_size_high) = split_u64(self.file_size);
+		let (file_index_low, file_index_high) = split_u64(self.file_index);
 		BY_HANDLE_FILE_INFORMATION {
 			dwFileAttributes: self.attributes.bits(),
 			ftCreationTime: self.creation_time.to_filetime(),
 			ftLastAccessTime: self.last_access_time.to_filetime(),
 			ftLastWriteTime: self.last_write_time.to_filetime(),
 			dwVolumeSerialNumber: 0,
-			nFileSizeHigh: (self.file_size >> 32) as u32,
-			nFileSizeLow: self.file_size as u32,
+			nFileSizeHigh: file_size_high,
+			nFileSizeLow: file_size_low,
 			nNumberOfLinks: self.number_of_links,
-			nFileIndexHigh: (self.file_index >> 32) as u32,
-			nFileIndexLow: self.file_index as u32,
+			nFileIndexHigh: file_index_high,
+			nFileIndexLow: file_index_low,
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use std::time::UNIX_EPOCH;
+
+	use super::*;
+
+	#[test]
+	fn splits_large_file_sizes_and_indexes_into_raw_words() {
+		let raw = FileInfo {
+			attributes: FileAttributes::ARCHIVE,
+			creation_time: UNIX_EPOCH,
+			last_access_time: UNIX_EPOCH,
+			last_write_time: UNIX_EPOCH,
+			file_size: 0xFEDC_BA98_7654_3210,
+			number_of_links: 7,
+			file_index: 0x0123_4567_89AB_CDEF,
+		}
+		.to_raw_struct();
+
+		assert_eq!(raw.dwFileAttributes, FileAttributes::ARCHIVE.bits());
+		assert_eq!(raw.nFileSizeHigh, 0xFEDC_BA98);
+		assert_eq!(raw.nFileSizeLow, 0x7654_3210);
+		assert_eq!(raw.nNumberOfLinks, 7);
+		assert_eq!(raw.nFileIndexHigh, 0x0123_4567);
+		assert_eq!(raw.nFileIndexLow, 0x89AB_CDEF);
 	}
 }

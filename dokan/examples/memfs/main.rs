@@ -1,3 +1,5 @@
+//! In-memory Dokany filesystem demonstrating the high-level `dokan` API.
+
 mod path;
 mod security;
 
@@ -18,7 +20,13 @@ use dokan::{
 	CreateFileInfo, DiskSpaceInfo, FileInfo, FileSystemHandler, FileSystemMounter,
 	FileTimeOperation, FillDataError, FillDataResult, FindData, FindStreamData, MountFlags,
 	MountOptions, OperationInfo, OperationResult, SecurityInformation, VolumeInfo, init, shutdown,
-	status::*, unmount,
+	status::{
+		STATUS_ACCESS_DENIED, STATUS_BUFFER_OVERFLOW, STATUS_CANNOT_DELETE, STATUS_DELETE_PENDING,
+		STATUS_DIRECTORY_NOT_EMPTY, STATUS_FILE_IS_A_DIRECTORY, STATUS_INVALID_DEVICE_REQUEST,
+		STATUS_INVALID_PARAMETER, STATUS_NOT_A_DIRECTORY, STATUS_OBJECT_NAME_COLLISION,
+		STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_NAME_NOT_FOUND, STATUS_SHARING_VIOLATION,
+	},
+	unmount,
 };
 use dokan_sys::win32::{
 	FILE_CREATE, FILE_DELETE_ON_CLOSE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN,
@@ -65,13 +73,13 @@ impl Attributes {
 		}
 	}
 
-	fn get_output_attrs(&self, is_dir: bool) -> u32 {
+	fn get_output_attrs(self, is_dir: bool) -> u32 {
 		let mut attrs = self.value;
 		if is_dir {
 			attrs |= winnt::FILE_ATTRIBUTE_DIRECTORY;
 		}
 		if attrs == 0 {
-			attrs = winnt::FILE_ATTRIBUTE_NORMAL
+			attrs = winnt::FILE_ATTRIBUTE_NORMAL;
 		}
 		attrs
 	}
@@ -139,21 +147,21 @@ impl Hash for EntryNameRef {
 
 impl PartialEq for EntryNameRef {
 	fn eq(&self, other: &Self) -> bool {
-		if self.0.len() != other.0.len() {
-			false
-		} else {
+		if self.0.len() == other.0.len() {
 			self.0
 				.as_slice()
 				.iter()
 				.zip(other.0.as_slice())
 				.all(|(c1, c2)| u16_tolower(*c1) == u16_tolower(*c2))
+		} else {
+			false
 		}
 	}
 }
 
 impl EntryNameRef {
 	fn new(s: &U16Str) -> &Self {
-		unsafe { &*(s as *const _ as *const Self) }
+		unsafe { &*(std::ptr::from_ref(s) as *const Self) }
 	}
 }
 
@@ -168,7 +176,7 @@ impl Borrow<EntryNameRef> for EntryName {
 
 impl Hash for EntryName {
 	fn hash<H: Hasher>(&self, state: &mut H) {
-		Borrow::<EntryNameRef>::borrow(self).hash(state)
+		Borrow::<EntryNameRef>::borrow(self).hash(state);
 	}
 }
 
@@ -197,6 +205,7 @@ impl FileEntry {
 
 // The compiler incorrectly believes that its usage in a public function of the private path module is public.
 #[derive(Debug)]
+/// One directory entry in the example's in-memory filesystem tree.
 pub struct DirEntry {
 	stat: RwLock<Stat>,
 	children: RwLock<HashMap<EntryName, Entry>>,
@@ -402,7 +411,10 @@ impl MemFsHandler {
 		self.id_counter.fetch_add(1, Ordering::Relaxed)
 	}
 
-	#[allow(clippy::too_many_arguments)]
+	#[allow(
+		clippy::too_many_arguments,
+		reason = "creation requires the native security and parent context as one transaction"
+	)]
 	fn create_new(
 		&self,
 		name: &FullName,
@@ -454,7 +466,7 @@ impl MemFsHandler {
 				.is_none()
 		);
 		parent.stat.write().unwrap().update_mtime(SystemTime::now());
-		let is_dir = is_dir && stream.is_some();
+		let is_dir = is_dir && stream.is_none();
 		Ok(CreateFileInfo {
 			context: EntryHandle::new(entry, stream, delete_pending),
 			is_dir,
@@ -476,6 +488,10 @@ fn ignore_name_too_long(err: FillDataError) -> OperationResult<()> {
 impl FileSystemHandler for MemFsHandler {
 	type Context = EntryHandle;
 
+	#[allow(
+		clippy::too_many_lines,
+		reason = "the example keeps create-disposition behavior together for readability"
+	)]
 	fn create_file(
 		&self,
 		request: &dokan::CreateFileRequest<'_, Self>,
@@ -640,8 +656,8 @@ impl FileSystemHandler for MemFsHandler {
 							delete_pending,
 							security_context
 								.security_descriptor()
-								.map_or(std::ptr::null(), |descriptor| descriptor.as_ptr())
-								as winnt::PSECURITY_DESCRIPTOR,
+								.map_or(std::ptr::null(), dokan::SecurityDescriptorRef::as_ptr)
+								.cast_mut(),
 							token.as_raw_handle(),
 							&parent,
 							&mut children,
@@ -650,44 +666,40 @@ impl FileSystemHandler for MemFsHandler {
 						FILE_OPEN => Err(STATUS_OBJECT_NAME_NOT_FOUND),
 						_ => Err(STATUS_INVALID_PARAMETER),
 					}
+				} else if create_disposition == FILE_OPEN || create_disposition == FILE_OVERWRITE {
+					Err(STATUS_OBJECT_NAME_NOT_FOUND)
 				} else {
-					if create_disposition == FILE_OPEN || create_disposition == FILE_OVERWRITE {
-						Err(STATUS_OBJECT_NAME_NOT_FOUND)
-					} else {
-						self.create_new(
-							&name,
-							file_attributes | winnt::FILE_ATTRIBUTE_ARCHIVE,
-							delete_pending,
-							security_context
-								.security_descriptor()
-								.map_or(std::ptr::null(), |descriptor| descriptor.as_ptr())
-								as winnt::PSECURITY_DESCRIPTOR,
-							token.as_raw_handle(),
-							&parent,
-							&mut children,
-							false,
-						)
-					}
+					self.create_new(
+						&name,
+						file_attributes | winnt::FILE_ATTRIBUTE_ARCHIVE,
+						delete_pending,
+						security_context
+							.security_descriptor()
+							.map_or(std::ptr::null(), dokan::SecurityDescriptorRef::as_ptr)
+							.cast_mut(),
+						token.as_raw_handle(),
+						&parent,
+						&mut children,
+						false,
+					)
 				}
+			}
+		} else if create_disposition == FILE_OPEN || create_disposition == FILE_OPEN_IF {
+			if create_options & FILE_NON_DIRECTORY_FILE > 0 {
+				Err(STATUS_FILE_IS_A_DIRECTORY)
+			} else {
+				Ok(CreateFileInfo {
+					context: EntryHandle::new(
+						Entry::Directory(Arc::clone(&self.root)),
+						None,
+						info.delete_pending(),
+					),
+					is_dir: true,
+					new_file_created: false,
+				})
 			}
 		} else {
-			if create_disposition == FILE_OPEN || create_disposition == FILE_OPEN_IF {
-				if create_options & FILE_NON_DIRECTORY_FILE > 0 {
-					Err(STATUS_FILE_IS_A_DIRECTORY)
-				} else {
-					Ok(CreateFileInfo {
-						context: EntryHandle::new(
-							Entry::Directory(Arc::clone(&self.root)),
-							None,
-							info.delete_pending(),
-						),
-						is_dir: true,
-						new_file_created: false,
-					})
-				}
-			} else {
-				Err(STATUS_INVALID_PARAMETER)
-			}
+			Err(STATUS_INVALID_PARAMETER)
 		}
 	}
 
@@ -718,17 +730,20 @@ impl FileSystemHandler for MemFsHandler {
 		_info: &OperationInfo<'_, Self>,
 		context: &Self::Context,
 	) -> OperationResult<u32> {
-		let mut do_read = |data: &Vec<_>| {
-			let offset = offset as usize;
+		let offset = usize::try_from(offset).map_err(|_| STATUS_INVALID_PARAMETER)?;
+		let mut do_read = |data: &[u8]| -> OperationResult<u32> {
+			if offset >= data.len() {
+				return Ok(0);
+			}
 			let len = std::cmp::min(buffer.len(), data.len() - offset);
 			buffer[0..len].copy_from_slice(&data[offset..offset + len]);
-			len as u32
+			u32::try_from(len).map_err(|_| STATUS_INVALID_PARAMETER)
 		};
 		let alt_stream = context.alt_stream.read().unwrap();
 		if let Some(stream) = alt_stream.as_ref() {
-			Ok(do_read(&stream.read().unwrap().data))
+			do_read(&stream.read().unwrap().data)
 		} else if let Entry::File(file) = &context.entry {
-			Ok(do_read(&file.data.read().unwrap()))
+			do_read(&file.data.read().unwrap())
 		} else {
 			Err(STATUS_INVALID_DEVICE_REQUEST)
 		}
@@ -742,24 +757,32 @@ impl FileSystemHandler for MemFsHandler {
 		info: &OperationInfo<'_, Self>,
 		context: &Self::Context,
 	) -> OperationResult<u32> {
-		let do_write = |data: &mut Vec<_>| {
+		let requested_offset = if info.write_to_eof() {
+			None
+		} else {
+			Some(usize::try_from(offset).map_err(|_| STATUS_INVALID_PARAMETER)?)
+		};
+		let written = u32::try_from(buffer.len()).map_err(|_| STATUS_INVALID_PARAMETER)?;
+		let do_write = |data: &mut Vec<_>| -> OperationResult<u32> {
 			let offset = if info.write_to_eof() {
 				data.len()
 			} else {
-				offset as usize
+				requested_offset.expect("a non-EOF write has an explicit offset")
 			};
-			let len = buffer.len();
-			if offset + len > data.len() {
-				data.resize(offset + len, 0);
+			let end = offset
+				.checked_add(buffer.len())
+				.ok_or(STATUS_INVALID_PARAMETER)?;
+			if end > data.len() {
+				data.resize(end, 0);
 			}
-			data[offset..offset + len].copy_from_slice(buffer);
-			len as u32
+			data[offset..end].copy_from_slice(buffer);
+			Ok(written)
 		};
 		let alt_stream = context.alt_stream.read().unwrap();
 		let ret = if let Some(stream) = alt_stream.as_ref() {
-			Ok(do_write(&mut stream.write().unwrap().data))
+			do_write(&mut stream.write().unwrap().data)
 		} else if let Entry::File(file) = &context.entry {
-			Ok(do_write(&mut file.data.write().unwrap()))
+			do_write(&mut file.data.write().unwrap())
 		} else {
 			Err(STATUS_ACCESS_DENIED)
 		};
@@ -876,7 +899,7 @@ impl FileSystemHandler for MemFsHandler {
 		                         flag: &AtomicBool| match time_info {
 			FileTimeOperation::SetTime(new_time) => {
 				if flag.load(Ordering::Relaxed) {
-					*time = *new_time
+					*time = *new_time;
 				}
 			}
 			FileTimeOperation::DisableUpdate => flag.store(false, Ordering::Relaxed),
@@ -935,6 +958,10 @@ impl FileSystemHandler for MemFsHandler {
 		}
 	}
 
+	#[allow(
+		clippy::too_many_lines,
+		reason = "the example keeps file and alternate-stream move cases together"
+	)]
 	fn move_file(
 		&self,
 		file_name: &U16CStr,
@@ -976,8 +1003,7 @@ impl FileSystemHandler for MemFsHandler {
 						.read()
 						.unwrap()
 						.as_ref()
-						.map(|s| Arc::ptr_eq(s, stream))
-						.unwrap_or(false)
+						.is_some_and(|s| Arc::ptr_eq(s, stream))
 					{
 						Ok(())
 					} else if !replace_if_existing {
@@ -1008,8 +1034,7 @@ impl FileSystemHandler for MemFsHandler {
 						stream.handle_count = 1;
 						stream.delete_pending = stat.delete_pending;
 						stat.delete_pending = false;
-						stream.data = data.clone();
-						data.clear();
+						stream.data = std::mem::take(&mut *data);
 						let stream = Arc::new(RwLock::new(stream));
 						assert!(
 							stat.alt_streams
@@ -1035,7 +1060,7 @@ impl FileSystemHandler for MemFsHandler {
 						src_stream_locked.handle_count -= 1;
 						stat.delete_pending = src_stream_locked.delete_pending;
 						src_stream_locked.delete_pending = false;
-						*file.data.write().unwrap() = src_stream_locked.data.clone();
+						*file.data.write().unwrap() = std::mem::take(&mut src_stream_locked.data);
 						stat.alt_streams
 							.remove(EntryNameRef::new(src_stream_info.unwrap().name))
 							.unwrap();
@@ -1133,12 +1158,13 @@ impl FileSystemHandler for MemFsHandler {
 		_info: &OperationInfo<'_, Self>,
 		context: &Self::Context,
 	) -> OperationResult<()> {
+		let offset = usize::try_from(offset).map_err(|_| STATUS_INVALID_PARAMETER)?;
 		let alt_stream = context.alt_stream.read().unwrap();
 		let ret = if let Some(stream) = alt_stream.as_ref() {
-			stream.write().unwrap().data.resize(offset as usize, 0);
+			stream.write().unwrap().data.resize(offset, 0);
 			Ok(())
 		} else if let Entry::File(file) = &context.entry {
-			file.data.write().unwrap().resize(offset as usize, 0);
+			file.data.write().unwrap().resize(offset, 0);
 			Ok(())
 		} else {
 			Err(STATUS_INVALID_DEVICE_REQUEST)
@@ -1159,8 +1185,8 @@ impl FileSystemHandler for MemFsHandler {
 		_info: &OperationInfo<'_, Self>,
 		context: &Self::Context,
 	) -> OperationResult<()> {
+		let alloc_size = usize::try_from(alloc_size).map_err(|_| STATUS_INVALID_PARAMETER)?;
 		let set_alloc = |data: &mut Vec<_>| {
-			let alloc_size = alloc_size as usize;
 			let cap = data.capacity();
 			if alloc_size < data.len() {
 				data.resize(alloc_size, 0);
@@ -1240,6 +1266,8 @@ impl FileSystemHandler for MemFsHandler {
 		_info: &OperationInfo<'_, Self>,
 		context: &Self::Context,
 	) -> OperationResult<usize> {
+		let descriptor_len =
+			u32::try_from(security_descriptor.len()).map_err(|_| STATUS_INVALID_PARAMETER)?;
 		context
 			.entry
 			.stat()
@@ -1249,9 +1277,9 @@ impl FileSystemHandler for MemFsHandler {
 			.get_security_info(
 				security_information.bits(),
 				security_descriptor.as_mut_ptr().cast(),
-				security_descriptor.len() as u32,
+				descriptor_len,
 			)
-			.map(|length| length as usize)
+			.map(|length| usize::try_from(length).expect("u32 fits in usize on Windows"))
 	}
 
 	fn set_file_security(
@@ -1282,17 +1310,19 @@ impl FileSystemHandler for MemFsHandler {
 	) -> OperationResult<()> {
 		if let Entry::File(file) = &context.entry {
 			fill_find_stream_data(&FindStreamData {
-				size: file.data.read().unwrap().len() as i64,
+				size: i64::try_from(file.data.read().unwrap().len())
+					.expect("Vec length fits in i64 on Windows"),
 				name: U16CString::from_str("::$DATA").unwrap(),
 			})
 			.or_else(ignore_name_too_long)?;
 		}
-		for (k, v) in context.entry.stat().read().unwrap().alt_streams.iter() {
+		for (k, v) in &context.entry.stat().read().unwrap().alt_streams {
 			let mut name_buf = vec![':' as u16];
 			name_buf.extend_from_slice(k.0.as_slice());
 			name_buf.extend_from_slice(U16String::from_str(":$DATA").as_slice());
 			fill_find_stream_data(&FindStreamData {
-				size: v.read().unwrap().data.len() as i64,
+				size: i64::try_from(v.read().unwrap().data.len())
+					.expect("Vec length fits in i64 on Windows"),
 				name: U16CString::from_ustr(U16Str::from_slice(&name_buf)).unwrap(),
 			})
 			.or_else(ignore_name_too_long)?;
@@ -1366,7 +1396,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let mount_point = mount_point.clone();
 	ctrlc::set_handler(move || {
 		if unmount(&mount_point) {
-			println!("File system will unmount...")
+			println!("File system will unmount...");
 		} else {
 			eprintln!("Failed to unmount file system.");
 		}

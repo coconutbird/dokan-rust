@@ -8,12 +8,29 @@ repository.workspace = true
 documentation = "https://dokan-dev.github.io/dokan-rust-doc/html/dokan_sys/"
 keywords = ["ffi", "dokan", "bindings", "driver", "filesystem"]
 categories = ["external-ffi-bindings"]
-readme = "README.md"
+readme = "README.crates-io.md"
 license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 links = "dokan"
 build = "build.rs"
+include = [
+    "/CHANGELOG.md",
+    "/LICENSE",
+    "/README.crates-io.md",
+    "/build.rs",
+    "/src/bindings.rs",
+    "/src/generate_version.c",
+    "/src/lib.rs",
+    "/src/win32.rs",
+    "/src/dokany/dokan/*.c",
+    "/src/dokany/dokan/*.def",
+    "/src/dokany/dokan/*.h",
+    "/src/dokany/dokan/*.i",
+    "/src/dokany/license.lgpl.txt",
+    "/src/dokany/license.mit.txt",
+    "/src/dokany/sys/public.h",
+]
 
 [badges]
 appveyor = { repository = "Liryna/dokan-rust" }

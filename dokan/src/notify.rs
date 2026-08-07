@@ -11,7 +11,7 @@ const TRUE: i32 = 1;
 ///
 /// Returns `true` on success.
 #[must_use]
-pub fn notify_create(instance: FileSystemHandle, path: impl AsRef<U16CStr>, is_dir: bool) -> bool {
+pub fn notify_create(instance: &FileSystemHandle, path: impl AsRef<U16CStr>, is_dir: bool) -> bool {
 	instance.with_raw(|raw| unsafe {
 		DokanNotifyCreate(raw, path.as_ref().as_ptr(), is_dir.into()) == TRUE
 	})
@@ -21,7 +21,7 @@ pub fn notify_create(instance: FileSystemHandle, path: impl AsRef<U16CStr>, is_d
 ///
 /// Returns `true` on success.
 #[must_use]
-pub fn notify_delete(instance: FileSystemHandle, path: impl AsRef<U16CStr>, is_dir: bool) -> bool {
+pub fn notify_delete(instance: &FileSystemHandle, path: impl AsRef<U16CStr>, is_dir: bool) -> bool {
 	instance.with_raw(|raw| unsafe {
 		DokanNotifyDelete(raw, path.as_ref().as_ptr(), is_dir.into()) == TRUE
 	})
@@ -31,7 +31,7 @@ pub fn notify_delete(instance: FileSystemHandle, path: impl AsRef<U16CStr>, is_d
 ///
 /// Returns `true` on success.
 #[must_use]
-pub fn notify_update(instance: FileSystemHandle, path: impl AsRef<U16CStr>) -> bool {
+pub fn notify_update(instance: &FileSystemHandle, path: impl AsRef<U16CStr>) -> bool {
 	instance.with_raw(|raw| unsafe { DokanNotifyUpdate(raw, path.as_ref().as_ptr()) == TRUE })
 }
 
@@ -39,7 +39,7 @@ pub fn notify_update(instance: FileSystemHandle, path: impl AsRef<U16CStr>) -> b
 ///
 /// Returns `true` on success.
 #[must_use]
-pub fn notify_xattr_update(instance: FileSystemHandle, path: impl AsRef<U16CStr>) -> bool {
+pub fn notify_xattr_update(instance: &FileSystemHandle, path: impl AsRef<U16CStr>) -> bool {
 	instance.with_raw(|raw| unsafe { DokanNotifyXAttrUpdate(raw, path.as_ref().as_ptr()) == TRUE })
 }
 
@@ -50,7 +50,7 @@ pub fn notify_xattr_update(instance: FileSystemHandle, path: impl AsRef<U16CStr>
 /// Returns `true` on success.
 #[must_use]
 pub fn notify_rename(
-	instance: FileSystemHandle,
+	instance: &FileSystemHandle,
 	old_path: impl AsRef<U16CStr>,
 	new_path: impl AsRef<U16CStr>,
 	is_dir: bool,

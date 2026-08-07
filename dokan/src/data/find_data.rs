@@ -6,7 +6,10 @@ use dokan_sys::{
 };
 use widestring::U16CString;
 
-use crate::{FileAttributes, FillDataError, FillDataResult, to_file_time::ToFileTime};
+use crate::{
+	FileAttributes, FillDataError, FillDataResult,
+	to_file_time::{ToFileTime, split_u64},
+};
 
 const MAX_PATH: usize = 260;
 pub(crate) trait ToRawStruct<T> {
@@ -47,6 +50,7 @@ impl ToRawStruct<WIN32_FIND_DATAW> for FindData {
 	fn to_raw_struct(&self) -> Option<WIN32_FIND_DATAW> {
 		let name_slice = self.file_name.as_slice_with_nul();
 		if name_slice.len() <= MAX_PATH {
+			let (file_size_low, file_size_high) = split_u64(self.file_size);
 			let mut c_file_name = [0; MAX_PATH];
 			c_file_name[..name_slice.len()].copy_from_slice(name_slice);
 			Some(WIN32_FIND_DATAW {
@@ -54,8 +58,8 @@ impl ToRawStruct<WIN32_FIND_DATAW> for FindData {
 				ftCreationTime: self.creation_time.to_filetime(),
 				ftLastAccessTime: self.last_access_time.to_filetime(),
 				ftLastWriteTime: self.last_write_time.to_filetime(),
-				nFileSizeHigh: (self.file_size >> 32) as u32,
-				nFileSizeLow: self.file_size as u32,
+				nFileSizeHigh: file_size_high,
+				nFileSizeLow: file_size_low,
 				dwReserved0: 0,
 				dwReserved1: 0,
 				cFileName: c_file_name,
@@ -112,7 +116,7 @@ pub(crate) fn wrap_fill_data<T, U: ToRawStruct<T>, TArg: Copy, TResult: PartialE
 ) -> impl FnMut(&U) -> FillDataResult {
 	move |data| {
 		let mut ffi_data = data.to_raw_struct().ok_or(FillDataError::NameTooLong)?;
-		if unsafe { fill_data(&mut ffi_data, fill_data_arg) == success_value } {
+		if unsafe { fill_data(&raw mut ffi_data, fill_data_arg) == success_value } {
 			Ok(())
 		} else {
 			Err(FillDataError::BufferFull)
@@ -157,6 +161,63 @@ mod tests {
 		assert_eq!(
 			wrapper(&ToRawStructStub { should_fail: false }),
 			Err(FillDataError::BufferFull)
+		);
+	}
+
+	#[test]
+	fn find_data_accepts_the_largest_terminated_name() {
+		let file_name = U16CString::from_vec(vec![u16::from(b'a'); MAX_PATH - 1]).unwrap();
+		let raw = FindData {
+			attributes: FileAttributes::NORMAL,
+			creation_time: SystemTime::UNIX_EPOCH,
+			last_access_time: SystemTime::UNIX_EPOCH,
+			last_write_time: SystemTime::UNIX_EPOCH,
+			file_size: u64::MAX,
+			file_name,
+		}
+		.to_raw_struct()
+		.expect("a MAX_PATH-sized terminated name must fit");
+
+		assert_eq!(raw.cFileName[MAX_PATH - 1], 0);
+		assert_eq!(raw.nFileSizeLow, u32::MAX);
+		assert_eq!(raw.nFileSizeHigh, u32::MAX);
+	}
+
+	#[test]
+	fn find_data_rejects_a_name_over_the_fixed_buffer_limit() {
+		let file_name = U16CString::from_vec(vec![u16::from(b'a'); MAX_PATH]).unwrap();
+		let data = FindData {
+			attributes: FileAttributes::NORMAL,
+			creation_time: SystemTime::UNIX_EPOCH,
+			last_access_time: SystemTime::UNIX_EPOCH,
+			last_write_time: SystemTime::UNIX_EPOCH,
+			file_size: 0,
+			file_name,
+		};
+
+		assert!(data.to_raw_struct().is_none());
+	}
+
+	#[test]
+	fn stream_data_checks_its_independent_name_limit() {
+		let largest = U16CString::from_vec(vec![u16::from(b's'); MAX_STREAM_NAME - 1]).unwrap();
+		let too_large = U16CString::from_vec(vec![u16::from(b's'); MAX_STREAM_NAME]).unwrap();
+
+		assert!(
+			FindStreamData {
+				size: i64::MAX,
+				name: largest,
+			}
+			.to_raw_struct()
+			.is_some()
+		);
+		assert!(
+			FindStreamData {
+				size: 0,
+				name: too_large,
+			}
+			.to_raw_struct()
+			.is_none()
 		);
 	}
 }

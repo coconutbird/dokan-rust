@@ -18,13 +18,21 @@ pub type OperationResult<T> = Result<T, NtStatus>;
 /// versions.
 #[derive(Debug)]
 pub struct CreateFileRequest<'a, FSH: FileSystemHandler> {
+	/// Path being created or opened.
 	pub path: &'a U16CStr,
+	/// Security information supplied by the Windows I/O manager.
 	pub security: SecurityContext<'a>,
+	/// Access rights requested by the caller.
 	pub desired_access: AccessRights,
+	/// File attributes requested for a newly created object.
 	pub file_attributes: FileAttributes,
+	/// Sharing modes requested by the caller.
 	pub share_access: ShareAccess,
+	/// Action to take based on whether the object already exists.
 	pub disposition: CreateDisposition,
+	/// Kernel create/open options.
 	pub options: CreateOptions,
+	/// Metadata and per-handle context for this Dokany operation.
 	pub operation: &'a OperationInfo<'a, FSH>,
 }
 
@@ -43,12 +51,22 @@ pub struct CreateFileRequest<'a, FSH: FileSystemHandler> {
 /// The error type is [`NtStatus`]. Use [`map_win32_error_to_ntstatus`] to convert from Win32 errors
 /// (e.g. returned by [`GetLastError`]).
 ///
+/// # Errors
+///
+/// Each callback returning [`OperationResult`] should return the [`NtStatus`]
+/// that Dokany must report for that operation. The default implementations
+/// return [`status::NOT_IMPLEMENTED`](crate::status::NOT_IMPLEMENTED).
+///
 /// [`cleanup`]: Self::cleanup
 /// [`close_file`]: Self::close_file
 /// [`create_file`]: Self::create_file
 /// [`map_win32_error_to_ntstatus`]: crate::map_win32_error_to_ntstatus
 /// [`GetLastError`]: https://learn.microsoft.com/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror
-#[allow(unused_variables)]
+#[allow(
+	unused_variables,
+	clippy::missing_errors_doc,
+	reason = "the shared callback error contract is documented on the trait"
+)]
 pub trait FileSystemHandler: Send + Sync + Sized + 'static {
 	/// State associated with one open file handle.
 	///
@@ -58,7 +76,7 @@ pub trait FileSystemHandler: Send + Sync + Sized + 'static {
 
 	/// Called when a file object is created.
 	///
-	/// The flags p-them to flags accepted by [`CreateFile`] using the
+	/// The flags can be mapped to values accepted by [`CreateFile`] using the
 	/// [`map_kernel_to_user_create_file_flags`] helper function.
 	///
 	/// [`ZwCreateFile`]: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-zwcreatefile

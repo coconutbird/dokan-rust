@@ -1,6 +1,9 @@
 use std::{borrow::Borrow, sync::Arc};
 
-use dokan::{OperationResult, status::*};
+use dokan::{
+	OperationResult,
+	status::{STATUS_ACCESS_DENIED, STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_PATH_NOT_FOUND},
+};
 use widestring::{U16CStr, U16Str, U16String};
 
 use crate::{DirEntry, Entry, EntryName, EntryNameRef};

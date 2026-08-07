@@ -32,7 +32,11 @@ pub mod status;
 mod to_file_time;
 mod types;
 
-use dokan_sys::*;
+use dokan_sys::{
+	DokanDebugMode, DokanDriverVersion, DokanInit, DokanIsNameInExpression,
+	DokanMapKernelToUserCreateFileFlags, DokanNtStatusFromWin32, DokanRemoveMountPoint,
+	DokanSetDebugMode, DokanShutdown, DokanUseStdErr, DokanVersion,
+};
 use std::sync::{Mutex, OnceLock};
 use widestring::U16CStr;
 const FALSE: i32 = 0;
@@ -97,7 +101,7 @@ pub fn init() {
 
 /// Releases all allocated resources by [`init`] when they are no longer needed.
 ///
-/// This should be called when the application no longer expects to create a new FileSystem and after all devices are unmount.
+/// This should be called when the application no longer expects to create a new `FileSystem` and after all devices are unmount.
 pub fn shutdown() {
 	release_runtime();
 }
@@ -106,6 +110,7 @@ pub fn shutdown() {
 ///
 /// The returned value is the version number without dots. For example, it returns `131` if Dokan
 /// v1.3.1 is loaded.
+#[must_use]
 pub fn get_lib_version() -> u32 {
 	unsafe { DokanVersion() }
 }
@@ -113,6 +118,7 @@ pub fn get_lib_version() -> u32 {
 /// Gets version of the Dokan driver installed on the current system.
 ///
 /// The returned value is the version number without dots.
+#[must_use]
 pub fn get_driver_version() -> u32 {
 	unsafe { DokanDriverVersion() }
 }
@@ -121,8 +127,8 @@ pub fn get_driver_version() -> u32 {
 fn test_versions() {
 	assert_eq!(MAJOR_API_VERSION, (get_lib_version() / 100).to_string());
 	assert!(get_driver_version() < 1000);
-	assert_eq!(DRIVER_NAME, format!("dokan{}.sys", MAJOR_API_VERSION));
-	assert_eq!(NP_NAME, format!("Dokan{}", MAJOR_API_VERSION));
+	assert_eq!(DRIVER_NAME, format!("dokan{MAJOR_API_VERSION}.sys"));
+	assert_eq!(NP_NAME, format!("Dokan{MAJOR_API_VERSION}"));
 }
 
 /// Checks whether the `name` matches the specified `expression`.
@@ -192,6 +198,7 @@ fn test_is_name_in_expression() {
 /// Converts a Win32 error, such as one returned by
 /// [`GetLastError`](https://learn.microsoft.com/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror),
 /// to [`NtStatus`].
+#[must_use]
 pub fn map_win32_error_to_ntstatus(error: u32) -> NtStatus {
 	NtStatus::from_raw(unsafe { DokanNtStatusFromWin32(error) })
 }
@@ -215,13 +222,18 @@ fn can_map_win32_error_to_ntstatus() {
 /// For instance, `ReadFile` and `WriteFile` in asynchronous mode are successful if they
 /// return `FALSE` and `GetLastError` returns `ERROR_IO_PENDING`.
 ///
+/// # Errors
+///
+/// Returns the current thread's last-error value converted to [`NtStatus`] when
+/// `condition` is `false`.
 pub fn win32_ensure(condition: bool) -> Result<(), NtStatus> {
-	match condition {
-		true => Ok(()),
-		false => {
-			let error = std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as u32;
-			Err(map_win32_error_to_ntstatus(error))
-		}
+	if condition {
+		Ok(())
+	} else {
+		let error = std::io::Error::last_os_error()
+			.raw_os_error()
+			.map_or(0, |value| u32::from_ne_bytes(value.to_ne_bytes()));
+		Err(map_win32_error_to_ntstatus(error))
 	}
 }
 
@@ -248,6 +260,7 @@ pub struct UserCreateFileFlags {
 ///
 /// [`CreateFile`]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew
 /// [`IRP_MJ_CREATE`]: https://docs.microsoft.com/en-us/windows-hardware/drivers/kernel/irp-mj-create
+#[must_use]
 pub fn map_kernel_to_user_create_file_flags(
 	desired_access: AccessRights,
 	file_attributes: FileAttributes,
@@ -263,9 +276,9 @@ pub fn map_kernel_to_user_create_file_flags(
 			file_attributes.bits(),
 			create_options.bits(),
 			create_disposition as u32,
-			&mut mapped_access,
-			&mut flags_and_attributes,
-			&mut creation_disposition,
+			&raw mut mapped_access,
+			&raw mut flags_and_attributes,
+			&raw mut creation_disposition,
 		);
 	}
 	UserCreateFileFlags {
@@ -314,17 +327,18 @@ pub fn unmount(mount_point: impl AsRef<U16CStr>) -> bool {
 /// Output stream to write debug messages to.
 ///
 /// Used by [`set_debug_stream`].
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum DebugStream {
 	/// The standard output stream.
 	Stdout,
-	/// The standard input stream.
+	/// The standard error stream.
 	Stderr,
 }
 
 /// Sets the output stream to write debug messages to.
 pub fn set_debug_stream(stream: DebugStream) {
 	unsafe {
-		DokanUseStdErr(if let DebugStream::Stdout = stream {
+		DokanUseStdErr(if let DebugStream::Stderr = stream {
 			TRUE
 		} else {
 			FALSE
