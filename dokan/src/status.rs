@@ -21,6 +21,8 @@ pub const INVALID_HANDLE: NtStatus = from_u32_bits(0xC000_0008);
 pub const INVALID_PARAMETER: NtStatus = from_u32_bits(0xC000_000D);
 /// The requested operation is not implemented.
 pub const NOT_IMPLEMENTED: NtStatus = from_u32_bits(0xC000_0002);
+/// The operation failed without a more specific status.
+pub const UNSUCCESSFUL: NtStatus = from_u32_bits(0xC000_0001);
 /// The request is not valid for this device.
 pub const INVALID_DEVICE_REQUEST: NtStatus = from_u32_bits(0xC000_0010);
 /// The supplied object name is invalid.
@@ -59,6 +61,8 @@ pub const STATUS_INVALID_HANDLE: NtStatus = INVALID_HANDLE;
 pub const STATUS_INVALID_PARAMETER: NtStatus = INVALID_PARAMETER;
 /// Windows-compatible alias for [`NOT_IMPLEMENTED`].
 pub const STATUS_NOT_IMPLEMENTED: NtStatus = NOT_IMPLEMENTED;
+/// Windows-compatible alias for [`UNSUCCESSFUL`].
+pub const STATUS_UNSUCCESSFUL: NtStatus = UNSUCCESSFUL;
 /// Windows-compatible alias for [`INVALID_DEVICE_REQUEST`].
 pub const STATUS_INVALID_DEVICE_REQUEST: NtStatus = INVALID_DEVICE_REQUEST;
 /// Windows-compatible alias for [`OBJECT_NAME_INVALID`].

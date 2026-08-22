@@ -44,10 +44,10 @@ use winapi::{
 
 use dokan::status::{STATUS_ACCESS_DENIED, STATUS_NOT_IMPLEMENTED};
 use dokan::{
-	CreateFileInfo, DeviceType, DiskSpaceInfo, FileInfo, FileSystemHandle, FileSystemHandler,
-	FileSystemMountError, FileSystemMounter, FileTimeOperation, FillDataResult, FindData,
+	CreateFileInfo, DeviceType, DirectoryFiller, DiskSpaceInfo, FileInfo, FileSystemHandle,
+	FileSystemHandler, FileSystemMountError, FileSystemMounter, FileTimeOperation, FindData,
 	FindStreamData, MountFlags, MountOptions, OperationInfo, OperationResult, SecurityInformation,
-	VolumeInfo, init, list_mount_points, notify_create, notify_delete, notify_rename,
+	StreamFiller, VolumeInfo, init, list_mount_points, notify_create, notify_delete, notify_rename,
 	notify_update, notify_xattr_update, shutdown, unmount,
 };
 
@@ -192,7 +192,7 @@ enum HandlerSignal {
 	Cleanup,
 	CloseFile,
 	ContextDropped,
-	ReadFile(i64, usize),
+	ReadFile(u64, usize),
 	WriteFile(i64, Vec<u8>),
 	FlushFileBuffers,
 	FindFilesWithPattern(U16CString),
@@ -473,7 +473,7 @@ impl FileSystemHandler for TestHandler {
 	fn read_file(
 		&self,
 		file_name: &U16CStr,
-		offset: i64,
+		offset: u64,
 		buffer: &mut [u8],
 		info: &OperationInfo<'_, Self>,
 		_context: &Self::Context,
@@ -554,22 +554,24 @@ impl FileSystemHandler for TestHandler {
 	fn find_files(
 		&self,
 		file_name: &U16CStr,
-		mut fill_find_data: impl FnMut(&FindData) -> FillDataResult,
+		filler: &mut DirectoryFiller<'_>,
 		info: &OperationInfo<'_, Self>,
 		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
-			"\\test_find_files" => fill_find_data(&FindData {
-				attributes: dokan::FileAttributes::NORMAL,
-				creation_time: UNIX_EPOCH,
-				last_access_time: UNIX_EPOCH + Duration::from_secs(1),
-				last_write_time: UNIX_EPOCH + Duration::from_secs(2),
-				file_size: (1 << 32) + 2,
-				file_name: convert_str("test_inner_file"),
-			})
-			.map_err(Into::into),
+			"\\test_find_files" => filler
+				.push(&FindData {
+					attributes: dokan::FileAttributes::NORMAL,
+					creation_time: UNIX_EPOCH,
+					last_access_time: UNIX_EPOCH + Duration::from_secs(1),
+					last_write_time: UNIX_EPOCH + Duration::from_secs(2),
+					file_size: (1 << 32) + 2,
+					file_name: "test_inner_file".into(),
+				})
+				.map(|_| ())
+				.map_err(Into::into),
 			_ => Err(STATUS_ACCESS_DENIED),
 		}
 	}
@@ -578,7 +580,7 @@ impl FileSystemHandler for TestHandler {
 		&self,
 		file_name: &U16CStr,
 		pattern: &U16CStr,
-		mut fill_find_data: impl FnMut(&FindData) -> FillDataResult,
+		filler: &mut DirectoryFiller<'_>,
 		info: &OperationInfo<'_, Self>,
 		_context: &Self::Context,
 	) -> OperationResult<()> {
@@ -586,20 +588,21 @@ impl FileSystemHandler for TestHandler {
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
 			"\\test_find_files" => Err(STATUS_NOT_IMPLEMENTED),
-			"\\test_find_files_with_pattern" => fill_find_data(&FindData {
-				attributes: dokan::FileAttributes::NORMAL,
-				creation_time: UNIX_EPOCH,
-				last_access_time: UNIX_EPOCH + Duration::from_secs(1),
-				last_write_time: UNIX_EPOCH + Duration::from_secs(2),
-				file_size: (1 << 32) + 2,
-				file_name: convert_str("test_inner_file_with_pattern"),
-			})
-			.map(|()| {
-				self.tx
-					.send(HandlerSignal::FindFilesWithPattern(pattern.to_owned()))
-					.unwrap();
-			})
-			.map_err(Into::into),
+			"\\test_find_files_with_pattern" => filler
+				.push(&FindData {
+					attributes: dokan::FileAttributes::NORMAL,
+					creation_time: UNIX_EPOCH,
+					last_access_time: UNIX_EPOCH + Duration::from_secs(1),
+					last_write_time: UNIX_EPOCH + Duration::from_secs(2),
+					file_size: (1 << 32) + 2,
+					file_name: "test_inner_file_with_pattern".into(),
+				})
+				.map(|_| {
+					self.tx
+						.send(HandlerSignal::FindFilesWithPattern(pattern.to_owned()))
+						.unwrap();
+				})
+				.map_err(Into::into),
 			_ => Err(STATUS_ACCESS_DENIED),
 		}
 	}
@@ -803,16 +806,16 @@ impl FileSystemHandler for TestHandler {
 	fn get_volume_information(
 		&self,
 		_info: &OperationInfo<'_, Self>,
-	) -> OperationResult<VolumeInfo> {
+	) -> OperationResult<VolumeInfo<'_>> {
 		Ok(VolumeInfo {
-			name: convert_str("Test Drive"),
+			name: "Test Drive".into(),
 			serial_number: 1,
 			max_component_length: 255,
 			features: dokan::VolumeFeatures::CASE_PRESERVED_NAMES
 				| dokan::VolumeFeatures::CASE_SENSITIVE_SEARCH
 				| dokan::VolumeFeatures::UNICODE_ON_DISK
 				| dokan::VolumeFeatures::NAMED_STREAMS,
-			fs_name: convert_str("TESTFS"),
+			fs_name: "TESTFS".into(),
 		})
 	}
 
@@ -890,18 +893,20 @@ impl FileSystemHandler for TestHandler {
 	fn find_streams(
 		&self,
 		file_name: &U16CStr,
-		mut fill_find_stream_data: impl FnMut(&FindStreamData) -> FillDataResult,
+		filler: &mut StreamFiller<'_>,
 		info: &OperationInfo<'_, Self>,
 		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_find_streams" {
-			fill_find_stream_data(&FindStreamData {
-				size: 42,
-				name: convert_str("::$DATA"),
-			})
-			.map_err(Into::into)
+			filler
+				.push(&FindStreamData {
+					size: 42,
+					name: "::$DATA".into(),
+				})
+				.map(|_| ())
+				.map_err(Into::into)
 		} else {
 			Err(STATUS_ACCESS_DENIED)
 		}

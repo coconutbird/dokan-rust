@@ -12,7 +12,7 @@ use widestring::U16CStr;
 use crate::{
 	CreateDisposition, CreateOptions, FileAttributes, SecurityContext, SecurityInformation,
 	ShareAccess,
-	data::{FileTimeOperation, OperationInfo, wrap_fill_data},
+	data::{DirectoryFiller, FileTimeOperation, OperationInfo, StreamFiller},
 	file_system_handler::{CreateFileRequest, FileSystemHandler},
 	operations_helpers::{NtResult, wrap_nt_result, wrap_unit},
 	status,
@@ -106,6 +106,7 @@ pub extern "system" fn read_file<FSH: FileSystemHandler>(
 	wrap_nt_result(|| unsafe {
 		*read_length = 0;
 		let file_name = U16CStr::from_ptr_str(file_name);
+		let offset = u64::try_from(offset).map_err(|_| STATUS_INVALID_PARAMETER)?;
 		let info = OperationInfo::<FSH>::new(dokan_file_info);
 		let buffer: &mut [u8] = if buffer_length == 0 {
 			&mut []
@@ -193,14 +194,17 @@ pub extern "system" fn find_files<FSH: FileSystemHandler>(
 ) -> NTSTATUS {
 	wrap_nt_result(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let fill_wrapper = wrap_fill_data(
-			fill_find_data.ok_or(STATUS_INVALID_PARAMETER)?,
-			dokan_file_info,
-			0,
-		);
+		let mut filler = DirectoryFiller::new(fill_find_data, dokan_file_info)
+			.ok_or(STATUS_INVALID_PARAMETER)?;
 		let info = OperationInfo::<FSH>::new(dokan_file_info);
-		info.handler()
-			.find_files(file_name, fill_wrapper, &info, info.context()?)
+		let result = info
+			.handler()
+			.find_files(file_name, &mut filler, &info, info.context()?);
+		if result.is_ok() && filler.is_full() {
+			Err(STATUS_BUFFER_OVERFLOW)
+		} else {
+			result
+		}
 	})
 }
 
@@ -213,19 +217,21 @@ pub extern "system" fn find_files_with_pattern<FSH: FileSystemHandler>(
 	wrap_nt_result(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let search_pattern = U16CStr::from_ptr_str(search_pattern);
-		let fill_wrapper = wrap_fill_data(
-			fill_find_data.ok_or(STATUS_INVALID_PARAMETER)?,
-			dokan_file_info,
-			0,
-		);
+		let mut filler = DirectoryFiller::new(fill_find_data, dokan_file_info)
+			.ok_or(STATUS_INVALID_PARAMETER)?;
 		let info = OperationInfo::<FSH>::new(dokan_file_info);
-		info.handler().find_files_with_pattern(
+		let result = info.handler().find_files_with_pattern(
 			file_name,
 			search_pattern,
-			fill_wrapper,
+			&mut filler,
 			&info,
 			info.context()?,
-		)
+		);
+		if result.is_ok() && filler.is_full() {
+			Err(STATUS_BUFFER_OVERFLOW)
+		} else {
+			result
+		}
 	})
 }
 
@@ -438,12 +444,14 @@ pub extern "system" fn get_volume_information<FSH: FileSystemHandler>(
 		let info = OperationInfo::<FSH>::new(dokan_file_info);
 		info.handler()
 			.get_volume_information(&info)
-			.map(|volume_info| unsafe {
+			.and_then(|volume_info| unsafe {
 				if !volume_name_buffer.is_null() && volume_name_size != 0 {
-					volume_name_buffer.copy_from_nonoverlapping(
-						volume_info.name.as_ptr(),
-						(volume_info.name.len() + 1).min(volume_name_size as usize),
-					);
+					let buffer =
+						slice::from_raw_parts_mut(volume_name_buffer, volume_name_size as usize);
+					volume_info
+						.name
+						.copy_truncated(buffer)
+						.map_err(|_| STATUS_INVALID_PARAMETER)?;
 				}
 				if !volume_serial_number.is_null() {
 					*volume_serial_number = volume_info.serial_number;
@@ -455,11 +463,16 @@ pub extern "system" fn get_volume_information<FSH: FileSystemHandler>(
 					*file_system_flags = volume_info.features.bits();
 				}
 				if !file_system_name_buffer.is_null() && file_system_name_size != 0 {
-					file_system_name_buffer.copy_from_nonoverlapping(
-						volume_info.fs_name.as_ptr(),
-						(volume_info.fs_name.len() + 1).min(file_system_name_size as usize),
+					let buffer = slice::from_raw_parts_mut(
+						file_system_name_buffer,
+						file_system_name_size as usize,
 					);
+					volume_info
+						.fs_name
+						.copy_truncated(buffer)
+						.map_err(|_| STATUS_INVALID_PARAMETER)?;
 				}
+				Ok(())
 			})
 	})
 }
@@ -558,13 +571,16 @@ pub extern "system" fn find_streams<FSH: FileSystemHandler>(
 ) -> NTSTATUS {
 	wrap_nt_result(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let fill_wrapper = wrap_fill_data(
-			fill_find_stream_data.ok_or(STATUS_INVALID_PARAMETER)?,
-			find_stream_context,
-			1,
-		);
+		let mut filler = StreamFiller::new(fill_find_stream_data, find_stream_context)
+			.ok_or(STATUS_INVALID_PARAMETER)?;
 		let info = OperationInfo::<FSH>::new(dokan_file_info);
-		info.handler()
-			.find_streams(file_name, fill_wrapper, &info, info.context()?)
+		let result = info
+			.handler()
+			.find_streams(file_name, &mut filler, &info, info.context()?);
+		if result.is_ok() && filler.is_full() {
+			Err(STATUS_BUFFER_OVERFLOW)
+		} else {
+			result
+		}
 	})
 }

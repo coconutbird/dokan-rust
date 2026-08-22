@@ -1,6 +1,6 @@
 use crate::data::{
-	CreateFileInfo, DiskSpaceInfo, FileInfo, FileTimeOperation, FillDataResult, FindData,
-	FindStreamData, OperationInfo, VolumeInfo,
+	CreateFileInfo, DirectoryFiller, DiskSpaceInfo, FileInfo, FileTimeOperation, OperationInfo,
+	StreamFiller, VolumeInfo,
 };
 use crate::{
 	AccessRights, CreateDisposition, CreateOptions, FileAttributes, NtStatus, SecurityContext,
@@ -141,7 +141,7 @@ pub trait FileSystemHandler: Send + Sync + Sized + 'static {
 	fn read_file(
 		&self,
 		file_name: &U16CStr,
-		offset: i64,
+		offset: u64,
 		buffer: &mut [u8],
 		info: &OperationInfo<'_, Self>,
 		context: &Self::Context,
@@ -201,7 +201,9 @@ pub trait FileSystemHandler: Send + Sync + Sized + 'static {
 
 	/// Lists all child items in the directory.
 	///
-	/// `fill_find_data` should be called for every child item in the directory.
+	/// Submit each child item through `filler`. Enumeration should stop when the
+	/// filler reports that Dokany's output buffer is full; [`DirectoryFiller::fill`]
+	/// handles that flow automatically.
 	///
 	/// It will only be called if [`find_files_with_pattern`] returns [`STATUS_NOT_IMPLEMENTED`].
 	///
@@ -212,7 +214,7 @@ pub trait FileSystemHandler: Send + Sync + Sized + 'static {
 	fn find_files(
 		&self,
 		file_name: &U16CStr,
-		fill_find_data: impl FnMut(&FindData) -> FillDataResult,
+		filler: &mut DirectoryFiller<'_>,
 		info: &OperationInfo<'_, Self>,
 		context: &Self::Context,
 	) -> OperationResult<()> {
@@ -221,7 +223,8 @@ pub trait FileSystemHandler: Send + Sync + Sized + 'static {
 
 	/// Lists all child items that matches the specified `pattern` in the directory.
 	///
-	/// `fill_find_data` should be called for every matching child item in the directory.
+	/// Submit each matching child item through `filler`. Enumeration should stop
+	/// when the filler reports that Dokany's output buffer is full.
 	///
 	/// [`is_name_in_expression`] can be used to determine if a file name matches the pattern.
 	///
@@ -237,7 +240,7 @@ pub trait FileSystemHandler: Send + Sync + Sized + 'static {
 		&self,
 		file_name: &U16CStr,
 		pattern: &U16CStr,
-		fill_find_data: impl FnMut(&FindData) -> FillDataResult,
+		filler: &mut DirectoryFiller<'_>,
 		info: &OperationInfo<'_, Self>,
 		context: &Self::Context,
 	) -> OperationResult<()> {
@@ -435,7 +438,7 @@ pub trait FileSystemHandler: Send + Sync + Sized + 'static {
 	fn get_volume_information(
 		&self,
 		info: &OperationInfo<'_, Self>,
-	) -> OperationResult<VolumeInfo> {
+	) -> OperationResult<VolumeInfo<'_>> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
 
@@ -492,8 +495,9 @@ pub trait FileSystemHandler: Send + Sync + Sized + 'static {
 
 	/// Lists all alternative streams of the file.
 	///
-	/// `fill_find_stream_data` should be called for every stream of the file, including the default
-	/// data stream `::$DATA`.
+	/// Submit every stream through `filler`, including the default data stream
+	/// `::$DATA`. Enumeration should stop when the filler reports that Dokany's
+	/// output buffer is full.
 	///
 	/// See [`FindFirstStream`] for more information.
 	///
@@ -501,7 +505,7 @@ pub trait FileSystemHandler: Send + Sync + Sized + 'static {
 	fn find_streams(
 		&self,
 		file_name: &U16CStr,
-		fill_find_stream_data: impl FnMut(&FindStreamData) -> FillDataResult,
+		filler: &mut StreamFiller<'_>,
 		info: &OperationInfo<'_, Self>,
 		context: &Self::Context,
 	) -> OperationResult<()> {

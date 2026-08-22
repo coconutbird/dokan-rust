@@ -17,11 +17,12 @@ use std::{
 
 use clap::{Arg, ArgAction, Command};
 use dokan::{
-	CreateFileInfo, DiskSpaceInfo, FileInfo, FileSystemHandler, FileSystemMounter,
-	FileTimeOperation, FillDataError, FillDataResult, FindData, FindStreamData, MountFlags,
-	MountOptions, OperationInfo, OperationResult, SecurityInformation, VolumeInfo, init, shutdown,
+	CreateFileInfo, DirectoryFiller, DiskSpaceInfo, FileInfo, FileSystemHandler, FileSystemMounter,
+	FileTimeOperation, FillDataError, FillDataStatus, FindData, FindStreamData, MountFlags,
+	MountOptions, OperationInfo, OperationResult, SecurityInformation, StreamFiller, VolumeInfo,
+	init, shutdown,
 	status::{
-		STATUS_ACCESS_DENIED, STATUS_BUFFER_OVERFLOW, STATUS_CANNOT_DELETE, STATUS_DELETE_PENDING,
+		STATUS_ACCESS_DENIED, STATUS_CANNOT_DELETE, STATUS_DELETE_PENDING,
 		STATUS_DIRECTORY_NOT_EMPTY, STATUS_FILE_IS_A_DIRECTORY, STATUS_INVALID_DEVICE_REQUEST,
 		STATUS_INVALID_PARAMETER, STATUS_NOT_A_DIRECTORY, STATUS_OBJECT_NAME_COLLISION,
 		STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_NAME_NOT_FOUND, STATUS_SHARING_VIOLATION,
@@ -475,13 +476,11 @@ impl MemFsHandler {
 	}
 }
 
-fn ignore_name_too_long(err: FillDataError) -> OperationResult<()> {
+fn ignore_invalid_name(err: FillDataError) -> FillDataStatus {
 	match err {
-		// Normal behavior.
-		FillDataError::BufferFull => Err(STATUS_BUFFER_OVERFLOW),
-		// Silently ignore this error because 1) file names passed to create_file should have been checked
-		// by Windows. 2) We don't want an error on a single file to make the whole directory unreadable.
-		FillDataError::NameTooLong => Ok(()),
+		// Names passed to create_file should already have been checked by Windows. Do not make the
+		// whole directory unreadable if one entry cannot be represented in Dokany's fixed buffer.
+		FillDataError::NameTooLong | FillDataError::EmbeddedNull => FillDataStatus::Continue,
 	}
 }
 
@@ -725,7 +724,7 @@ impl FileSystemHandler for MemFsHandler {
 	fn read_file(
 		&self,
 		_file_name: &U16CStr,
-		offset: i64,
+		offset: u64,
 		buffer: &mut [u8],
 		_info: &OperationInfo<'_, Self>,
 		context: &Self::Context,
@@ -839,7 +838,7 @@ impl FileSystemHandler for MemFsHandler {
 	fn find_files(
 		&self,
 		_file_name: &U16CStr,
-		mut fill_find_data: impl FnMut(&FindData) -> FillDataResult,
+		filler: &mut DirectoryFiller<'_>,
 		_info: &OperationInfo<'_, Self>,
 		context: &Self::Context,
 	) -> OperationResult<()> {
@@ -850,20 +849,24 @@ impl FileSystemHandler for MemFsHandler {
 			let children = dir.children.read().unwrap();
 			for (k, v) in children.iter() {
 				let stat = v.stat().read().unwrap();
-				fill_find_data(&FindData {
-					attributes: dokan::FileAttributes::from_bits_retain(
-						stat.attrs.get_output_attrs(v.is_dir()),
-					),
-					creation_time: stat.ctime,
-					last_access_time: stat.atime,
-					last_write_time: stat.mtime,
-					file_size: match v {
-						Entry::File(file) => file.data.read().unwrap().len() as u64,
-						Entry::Directory(_) => 0,
-					},
-					file_name: U16CString::from_ustr(&k.0).unwrap(),
-				})
-				.or_else(ignore_name_too_long)?;
+				let status = filler
+					.push(&FindData {
+						attributes: dokan::FileAttributes::from_bits_retain(
+							stat.attrs.get_output_attrs(v.is_dir()),
+						),
+						creation_time: stat.ctime,
+						last_access_time: stat.atime,
+						last_write_time: stat.mtime,
+						file_size: match v {
+							Entry::File(file) => file.data.read().unwrap().len() as u64,
+							Entry::Directory(_) => 0,
+						},
+						file_name: (&k.0).into(),
+					})
+					.unwrap_or_else(ignore_invalid_name);
+				if status.is_full() {
+					break;
+				}
 			}
 			Ok(())
 		} else {
@@ -1231,9 +1234,9 @@ impl FileSystemHandler for MemFsHandler {
 	fn get_volume_information(
 		&self,
 		_info: &OperationInfo<'_, Self>,
-	) -> OperationResult<VolumeInfo> {
+	) -> OperationResult<VolumeInfo<'_>> {
 		Ok(VolumeInfo {
-			name: U16CString::from_str("dokan-rust memfs").unwrap(),
+			name: "dokan-rust memfs".into(),
 			serial_number: 0,
 			max_component_length: path::MAX_COMPONENT_LENGTH,
 			features: dokan::VolumeFeatures::CASE_PRESERVED_NAMES
@@ -1242,7 +1245,7 @@ impl FileSystemHandler for MemFsHandler {
 				| dokan::VolumeFeatures::PERSISTENT_ACLS
 				| dokan::VolumeFeatures::NAMED_STREAMS,
 			// Custom names don't play well with UAC.
-			fs_name: U16CString::from_str("NTFS").unwrap(),
+			fs_name: "NTFS".into(),
 		})
 	}
 
@@ -1304,28 +1307,36 @@ impl FileSystemHandler for MemFsHandler {
 	fn find_streams(
 		&self,
 		_file_name: &U16CStr,
-		mut fill_find_stream_data: impl FnMut(&FindStreamData) -> FillDataResult,
+		filler: &mut StreamFiller<'_>,
 		_info: &OperationInfo<'_, Self>,
 		context: &Self::Context,
 	) -> OperationResult<()> {
 		if let Entry::File(file) = &context.entry {
-			fill_find_stream_data(&FindStreamData {
-				size: i64::try_from(file.data.read().unwrap().len())
-					.expect("Vec length fits in i64 on Windows"),
-				name: U16CString::from_str("::$DATA").unwrap(),
-			})
-			.or_else(ignore_name_too_long)?;
+			let status = filler
+				.push(&FindStreamData {
+					size: i64::try_from(file.data.read().unwrap().len())
+						.expect("Vec length fits in i64 on Windows"),
+					name: "::$DATA".into(),
+				})
+				.unwrap_or_else(ignore_invalid_name);
+			if status.is_full() {
+				return Ok(());
+			}
 		}
 		for (k, v) in &context.entry.stat().read().unwrap().alt_streams {
 			let mut name_buf = vec![':' as u16];
 			name_buf.extend_from_slice(k.0.as_slice());
 			name_buf.extend_from_slice(U16String::from_str(":$DATA").as_slice());
-			fill_find_stream_data(&FindStreamData {
-				size: i64::try_from(v.read().unwrap().data.len())
-					.expect("Vec length fits in i64 on Windows"),
-				name: U16CString::from_ustr(U16Str::from_slice(&name_buf)).unwrap(),
-			})
-			.or_else(ignore_name_too_long)?;
+			let status = filler
+				.push(&FindStreamData {
+					size: i64::try_from(v.read().unwrap().data.len())
+						.expect("Vec length fits in i64 on Windows"),
+					name: U16Str::from_slice(&name_buf).into(),
+				})
+				.unwrap_or_else(ignore_invalid_name);
+			if status.is_full() {
+				break;
+			}
 		}
 		Ok(())
 	}
